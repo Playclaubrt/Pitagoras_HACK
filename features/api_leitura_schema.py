@@ -1,0 +1,16 @@
+# Gerado automaticamente; nao edite. Campos vistos nos fetches do site.
+API_FETCHES = {'(sem acao; registro de leitura)': ['data',
+                                     'livro',
+                                     'minutos',
+                                     'modo',
+                                     'pagina',
+                                     'stack',
+                                     'trecho'],
+ 'avatar': ['acao', 'token'],
+ 'desejo': ['autor', 'titulo', 'token'],
+ 'editar-livro': ['id', 'nota', 'paginas', 'token'],
+ 'livro': ['ano', 'mes', 'nota', 'paginas', 'titulo', 'token'],
+ 'pergunta': ['acao', 'token'],
+ 'remover-desejo': ['id', 'token'],
+ 'remover-livro': ['id', 'token'],
+ 'remover-registro': ['data', 'token']}

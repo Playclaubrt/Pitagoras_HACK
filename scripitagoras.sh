@@ -1,0 +1,554 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -u
+
+# Menu interativo para consultar e usar a API do Diario de Leitura.
+API="https://www.lugaroriginal.com/api/leitura"
+TOKEN="${DIARIO_TOKEN:-}"
+API_MINUTOS=""
+INTERVALO=1
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+FEATURES_DIR="$SCRIPT_DIR/features"
+LOG_DIR="$SCRIPT_DIR/logs"
+FETCHES_ATUAL="$FEATURES_DIR/fetches-api-atual.txt"
+FETCHES_CODIGO="$FEATURES_DIR/api_leitura_schema.py"
+APIS_PUBLICAS="$FEATURES_DIR/apis-site-publicas.txt"
+LOG_FILE="$LOG_DIR/diario-leitura.log"
+
+# Consulta a interface atual e atualiza a lista dos payloads vistos nos bundles.
+# Esta verificacao usa GET e nao altera registros do diario.
+atualizar_fetches_site() {
+  python - "$API" "$TOKEN" "$FETCHES_ATUAL" <<'PYFETCH'
+import html, os, re, subprocess, sys, tempfile
+from urllib.parse import urljoin
+
+api, token, saida = sys.argv[1:]
+base = api.rsplit("/api/", 1)[0]
+
+def curl(url):
+    p = subprocess.run(["curl", "--http1.1", "-fsSL", "--max-time", "25", url], check=True, capture_output=True, text=True)
+    return p.stdout
+
+pagina = curl(base + "/leitura/" + token)
+scripts = re.findall(r'<script[^>]+src="([^\"]+\.js[^\"]*)"', pagina)
+if not scripts:
+    raise SystemExit("ERRO: nao achei scripts JS na pagina do diario.")
+
+achados = {}
+for caminho in scripts:
+    try:
+        js = curl(urljoin(base, html.unescape(caminho)))
+    except subprocess.CalledProcessError:
+        continue
+    for m in re.finditer(r'JSON\.stringify\(\s*\{', js):
+        inicio, nivel, aspas, escape, fim = m.end() - 1, 0, None, False, None
+        for i in range(inicio, min(len(js), inicio + 3000)):
+            ch = js[i]
+            if aspas:
+                if escape: escape = False
+                elif ch == "\\": escape = True
+                elif ch == aspas: aspas = None
+                continue
+            if ch in "'\"`": aspas = ch
+            elif ch == "{": nivel += 1
+            elif ch == "}":
+                nivel -= 1
+                if nivel == 0:
+                    fim = i + 1
+                    break
+        if fim is None:
+            continue
+        objeto = js[inicio:fim]
+        campos = set(re.findall(r'(?:^|[,\s])([A-Za-z_$][\w$]*)\s*:', objeto))
+        a = re.search(r'acao\s*:\s*["\']([^"\']+)', objeto)
+        acao = a.group(1) if a else "(sem acao; registro de leitura)"
+        achados.setdefault(acao, set()).update(campos)
+
+if not achados:
+    raise SystemExit("ERRO: bundles encontrados, mas nao reconheci payloads JSON.stringify.")
+linhas = ["Formatos atuais observados em " + base,
+          "Verificado em: " + __import__("datetime").datetime.now().astimezone().isoformat(timespec="seconds"),
+          "Fonte: bundles JS da pagina autenticada do diario.",
+          "Campos observados na interface; a validacao interna do servidor pode diferir.", ""]
+for acao in sorted(achados):
+    linhas.append(f"- {acao}: {', '.join(sorted(achados[acao])) or '(campos nao identificados)'}")
+conteudo = "\n".join(linhas) + "\n"
+os.makedirs(os.path.dirname(saida), exist_ok=True)
+def grava_atomico(caminho, texto):
+    fd, temporario = tempfile.mkstemp(prefix=".fetches-", dir=os.path.dirname(caminho), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(texto)
+        os.replace(temporario, caminho)
+    except Exception:
+        try: os.unlink(temporario)
+        except OSError: pass
+        raise
+
+grava_atomico(saida, conteudo)
+codigo = "# Gerado automaticamente; nao edite. Campos vistos nos fetches do site.\nAPI_FETCHES = " + __import__("pprint").pformat({k: sorted(v) for k, v in sorted(achados.items())}, sort_dicts=True) + "\n"
+grava_atomico(os.path.join(os.path.dirname(saida), "api_leitura_schema.py"), codigo)
+print(conteudo, end="")
+print("Relatorio atualizado: " + saida)
+print("Esquema de codigo atualizado: " + os.path.join(os.path.dirname(saida), "api_leitura_schema.py"))
+PYFETCH
+  local status=$?
+  if [ "$status" -eq 0 ]; then registrar_log "fetches=atualizados"; fi
+  return "$status"
+}
+
+atualizar_apis_publicas() {
+  python "$FEATURES_DIR/apis_site.py" "$APIS_PUBLICAS" || return 1
+  registrar_log "apis-publicas=atualizadas"
+}
+
+post_subscribe() {
+  local email json resp status body
+  read -r -p "E-mail para assinar a newsletter: " email
+  if ! printf '%s' "$email" | python -c 'import re,sys; raise SystemExit(0 if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", sys.stdin.read()) else 1)'; then
+    echo "E-mail invalido."
+    return 2
+  fi
+  confirmar_acao "Enviar este e-mail para a newsletter do Lugar Original?" || return 0
+  json="$(python -c 'import json,sys; print(json.dumps({"email":sys.argv[1], "website":""}))' "$email")"
+  resp="$(curl -sS --http1.1 --fail-with-body -X POST "https://www.lugaroriginal.com/api/subscribe" \
+      -H "Content-Type: application/json" --data-raw "$json" \
+      -w $'\n__HTTP__%{http_code}')"
+  status=$?
+  local http="${resp##*__HTTP__}"
+  body="${resp%$'\n'__HTTP__*}"
+  [ "$http" = "$resp" ] && http=000
+  echo "HTTP $http"
+  [ -n "$body" ] && echo "$body"
+  registrar_log "api=subscribe http=$http curl=$status"
+  return "$status"
+}
+
+menu_apis_publicas() {
+  local escolha
+  while :; do
+    echo
+    echo "===== APIS PUBLICAS DO SITE ====="
+    echo "1) Atualizar/ver inventario de APIs"
+    echo "2) Assinar a newsletter"
+    echo "0) Voltar"
+    read -r -p "Escolha uma opcao: " escolha
+    case "$escolha" in
+      1)
+        atualizar_apis_publicas || continue
+        ;;
+      2) post_subscribe ;;
+      0) return 0 ;;
+      *) echo "Opcao invalida." ;;
+    esac
+  done
+}
+
+menu_relatorio_parceiros() {
+  local pin opcao serie id cookie_file
+  printf "PIN do relatorio Pitagoras: "
+  IFS= read -r -s pin || return 1
+  printf "\n"
+  if [ -z "$pin" ]; then echo "PIN vazio."; return 1; fi
+
+  echo "Autenticando em lugaroriginal.com/parceiros/pitagoras..."
+  cookie_file="$(mktemp)" || { unset pin; return 1; }
+  if ! RELATORIO_PARCEIROS="$(printf '%s' "$pin" | curl --http1.1 -fsSL --max-time 30 \
+      -b "$cookie_file" -c "$cookie_file" --location --data-urlencode 'pin@-' \
+      "https://www.lugaroriginal.com/parceiros/pitagoras/auth")"; then
+    python -c 'import os,sys; os.unlink(sys.argv[1])' "$cookie_file" 2>/dev/null || true
+    unset pin
+    echo "Nao consegui acessar o relatorio. Confira a conexao e o PIN."
+    registrar_log "parceiros=erro-auth"
+    return 1
+  fi
+  python -c 'import os,sys; os.unlink(sys.argv[1])' "$cookie_file" 2>/dev/null || true
+  unset pin
+  if ! printf '%s' "$RELATORIO_PARCEIROS" | python -c 'import sys; s=sys.stdin.read(); raise SystemExit(0 if "Prestação de contas da leitura" in s and "Acesso restrito" not in s else 1)'; then
+    unset RELATORIO_PARCEIROS
+    registrar_log "parceiros=pin-recusado"
+    echo "O site nao confirmou o acesso; verifique o PIN."
+    return 1
+  fi
+  registrar_log "parceiros=relatorio-acessado"
+
+  while :; do
+    echo
+    echo "===== RELATORIO PITAGORAS ====="
+    echo "1) Resumo geral da escola"
+    echo "2) Nota da semana por turma"
+    echo "3) Adesao por turma"
+    echo "4) Detalhes de uma serie (inclui alunos)"
+    echo "5) Relatorio completo (inclui alunos)"
+    echo "0) Voltar"
+    read -r -p "Escolha uma opcao: " opcao
+    case "$opcao" in
+      1|2|3|5)
+        printf '%s' "$RELATORIO_PARCEIROS" | python "$FEATURES_DIR/parceiros_relatorio.py" "$opcao"
+        ;;
+      4)
+        echo "1) 6º Ano   2) 7º Ano   3) 8º Ano   4) 9º Ano"
+        echo "5) 1ª Série  6) 2ª Série  7) 3ª Série"
+        read -r -p "Escolha a serie: " serie
+        case "$serie" in
+          1) id=6ano ;; 2) id=7ano ;; 3) id=8ano ;; 4) id=9ano ;;
+          5) id=1serie ;; 6) id=2serie ;; 7) id=3serie ;;
+          *) echo "Serie invalida."; continue ;;
+        esac
+        printf '%s' "$RELATORIO_PARCEIROS" | python "$FEATURES_DIR/parceiros_relatorio.py" 4 "$id"
+        ;;
+      0) unset RELATORIO_PARCEIROS; return 0 ;;
+      *) echo "Opcao invalida." ;;
+    esac
+  done
+}
+
+registrar_log() {
+  mkdir -p "$LOG_DIR"
+  printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$LOG_FILE"
+}
+
+post_api() {
+  local json resp curl_status http body acao="$1"
+  shift
+  json="$(python - "$TOKEN" "$acao" "$@" <<'PYJSON'
+import json, sys
+_, token, acao, *v = sys.argv
+if acao == "leitura":
+    data, livro, pagina, minutos, trecho, modo = v
+    payload = {"token": token, "data": data, "livro": livro,
+               "pagina": int(pagina), "minutos": int(minutos),
+               "trecho": trecho, "modo": modo}
+elif acao == "livro":
+    titulo, mes, ano, paginas, nota = v
+    payload = {"acao": "livro", "token": token, "titulo": titulo,
+               "mes": int(mes), "ano": int(ano),
+               "paginas": int(paginas), "nota": int(nota)}
+elif acao == "desejo":
+    titulo, autor = v
+    payload = {"acao": "desejo", "token": token, "titulo": titulo, "autor": autor}
+elif acao == "editar-livro":
+    ident, paginas, nota = v
+    payload = {"acao": acao, "token": token, "id": ident,
+               "paginas": int(paginas), "nota": int(nota)}
+elif acao in ("remover-livro", "remover-desejo"):
+    payload = {"acao": acao, "token": token, "id": v[0]}
+elif acao == "remover-registro":
+    payload = {"acao": acao, "token": token, "data": v[0]}
+else:
+    raise SystemExit("Acao nao suportada pelo menu.")
+print(json.dumps(payload, ensure_ascii=False))
+PYJSON
+)" || return 1
+  resp="$(curl -sS --http1.1 --fail-with-body -X POST "$API" \
+      -H "Content-Type: application/json" --data-raw "$json" \
+      -w $'\n__HTTP__%{http_code}')"
+  curl_status=$?
+  http="${resp##*__HTTP__}"
+  body="${resp%$'\n'__HTTP__*}"
+  [ "$http" = "$resp" ] && http="000"
+  printf 'HTTP %s\n' "$http"
+  [ -n "$body" ] && printf '%s\n' "$body"
+  API_MINUTOS="$(printf '%s' "$body" | python -c 'import json,sys; d=json.load(sys.stdin); print(d.get("minutos", ""))' 2>/dev/null || true)"
+  registrar_log "acao=$acao http=$http curl=$curl_status"
+  return "$curl_status"
+}
+
+confirmar_acao() {
+  local resposta
+  read -r -p "$1 [s/N]: " resposta
+  case "$resposta" in s|S|sim|SIM) return 0 ;; *) return 1 ;; esac
+}
+
+menu_acoes_api() {
+  local escolha data livro pagina minutos trecho modo titulo mes ano paginas nota autor ident
+  while :; do
+    echo
+    echo "===== ACOES DO DIARIO ====="
+    echo "1) Registrar leitura do dia"
+    echo "2) Cadastrar livro terminado"
+    echo "3) Adicionar livro desejado"
+    echo "4) Editar paginas e nota de um livro"
+    echo "5) Remover livro terminado"
+    echo "6) Remover registro de leitura por data"
+    echo "7) Remover livro desejado"
+    echo "8) Acumular (submenu)"
+    echo "0) Voltar / sair"
+    read -r -p "Escolha uma acao: " escolha
+    case "$escolha" in
+      1)
+        read -r -p "Data (AAAA-MM-DD): " data
+        read -r -p "Livro: " livro
+        read -r -p "Pagina atual: " pagina
+        read -r -p "Minutos (10, 15, 20, 30, 45 ou 60): " minutos
+        read -r -p "Frase sobre a leitura: " trecho
+        read -r -p "Modo (somar/corrigir): " modo
+        case "$modo" in somar) ;; corrigir) confirmar_acao "Corrigir substitui o registro desse dia. Continuar?" || continue ;; *) echo "Modo invalido."; continue ;; esac
+        post_api leitura "$data" "$livro" "$pagina" "$minutos" "$trecho" "$modo"
+        ;;
+      2)
+        read -r -p "Titulo: " titulo
+        read -r -p "Mes em que terminou (1-12): " mes
+        read -r -p "Ano: " ano
+        read -r -p "Numero de paginas: " paginas
+        read -r -p "Nota (0-10): " nota
+        post_api livro "$titulo" "$mes" "$ano" "$paginas" "$nota"
+        ;;
+      3)
+        read -r -p "Titulo: " titulo
+        read -r -p "Autor (pode deixar vazio): " autor
+        post_api desejo "$titulo" "$autor"
+        ;;
+      4)
+        read -r -p "ID do livro: " ident
+        read -r -p "Numero de paginas: " paginas
+        read -r -p "Nota (0-10): " nota
+        post_api editar-livro "$ident" "$paginas" "$nota"
+        ;;
+      5)
+        read -r -p "ID do livro terminado: " ident
+        confirmar_acao "Remover este livro do diario?" && post_api remover-livro "$ident"
+        ;;
+      6)
+        read -r -p "Data do registro (AAAA-MM-DD): " data
+        confirmar_acao "Remover o registro dessa data?" && post_api remover-registro "$data"
+        ;;
+      7)
+        read -r -p "ID do livro desejado: " ident
+        confirmar_acao "Remover este livro desejado?" && post_api remover-desejo "$ident"
+        ;;
+      8) menu_acumular ;;
+      0) return 0 ;;
+      *) echo "Opcao invalida." ;;
+    esac
+  done
+}
+
+remover_livro_pendente() {
+  python - "$LOG_DIR/livros-pendentes.txt" "$1" <<'PYPENDING'
+import os, sys, tempfile
+path, titulo = sys.argv[1:]
+try:
+    with open(path, encoding="utf-8") as f:
+        linhas = f.readlines()
+except FileNotFoundError:
+    linhas = []
+fd, tmp = tempfile.mkstemp(prefix=".pendentes-", dir=os.path.dirname(path), text=True)
+with os.fdopen(fd, "w", encoding="utf-8") as f:
+    f.writelines(x for x in linhas if x.rstrip("\n") != titulo)
+os.replace(tmp, path)
+PYPENDING
+}
+
+menu_acumular() {
+  local escolha data livro pagina i atual
+  echo
+  echo "===== ACUMULAR ====="
+  echo "1) Somar leituras de 60 min ate chegar a 600 min"
+  echo "2) Sortear mes/paginas/nota e processar todos os livros (ate 750)"
+  echo "0) Voltar"
+  read -r -p "Escolha uma opcao: " escolha
+  case "$escolha" in
+    1)
+      read -r -p "Data (AAAA-MM-DD): " data
+      read -r -p "Titulo do livro: " livro
+      read -r -p "Pagina especifica: " pagina
+      case "$data" in ????-??-??) ;; *) echo "Data deve estar no formato AAAA-MM-DD."; return 2 ;; esac
+      case "$pagina" in ''|*[!0-9]*) echo "Pagina invalida."; return 2 ;; esac
+      confirmar_acao "Serão somadas leituras de 60 min nessa data ate o retorno indicar 600 min. Continuar?" || return 0
+      for i in 1 2 3 4 5 6 7 8 9 10; do
+        echo "[$i/10] Somando 60 min: $livro, pagina $pagina ($data)"
+        if ! post_api leitura "$data" "$livro" "$pagina" 60 "Li $livro ate a pagina $pagina." somar; then
+          registrar_log "acumular=erro data=$data titulo=$livro pagina=$pagina tentativa=$i"
+          echo "Parando no primeiro erro; confira a resposta da API e os logs."
+          return 1
+        fi
+        atual="${API_MINUTOS:-}"
+        if ! [[ "$atual" =~ ^[0-9]+$ ]]; then
+          registrar_log "acumular=sem-total data=$data titulo=$livro pagina=$pagina tentativa=$i"
+          echo "A API nao retornou o total de minutos; parei para evitar novas somas incertas."
+          return 1
+        fi
+        registrar_log "acumular=data-$data titulo=$livro pagina=$pagina tentativa=$i minutos=$atual"
+        if [ "$atual" -ge 600 ]; then
+          echo "Meta alcancada: API informou $atual minutos em $data."
+          return 0
+        fi
+        sleep "$INTERVALO"
+      done
+      echo "Foram feitas 10 tentativas. Total informado pela API: ${API_MINUTOS:-desconhecido}."
+      ;;
+    2) processar_livros_em_sequencia ;;
+    0) return 0 ;;
+    *) echo "Opcao invalida."; return 2 ;;
+  esac
+}
+
+processar_livros_em_sequencia() {
+  local arquivo enviados pendentes ordem total titulo mes ano paginas nota data_atual ano_atual sorteados mes_sorteado paginas_sorteadas nota_sorteada
+  arquivo="$SCRIPT_DIR/books/livros.txt"
+  enviados="$LOG_DIR/livros-enviados.txt"
+  pendentes="$LOG_DIR/livros-pendentes.txt"
+  mkdir -p "$SCRIPT_DIR/books" "$LOG_DIR"
+  touch "$enviados"
+  if [ ! -f "$arquivo" ]; then
+    cat > "$arquivo" <<'BOOKS'
+# Um titulo por linha, ou: titulo|mes|ano|paginas|nota
+BOOKS
+  fi
+  total=0
+  while IFS= read -r titulo || [ -n "$titulo" ]; do
+    case "$titulo" in ''|\#*) continue ;; esac
+    total=$((total + 1))
+  done < "$arquivo"
+  if [ "$total" -eq 0 ]; then
+    echo "Adicione titulos em $arquivo e tente novamente."
+    return 1
+  fi
+  if [ "$total" -gt 750 ]; then
+    echo "O arquivo tem $total titulos; o limite por execucao e 750."
+    return 2
+  fi
+  ordem="$LOG_DIR/.livros-ordem.txt"
+  restantes="$(python - "$arquivo" "$enviados" "$pendentes" "$ordem" <<'PYQUEUE'
+import os, random, sys, tempfile
+src, enviados, pendentes, ordem = sys.argv[1:]
+try:
+    with open(enviados, encoding="utf-8") as f:
+        done = {x.rstrip("\n") for x in f}
+except FileNotFoundError:
+    done = set()
+with open(src, encoding="utf-8") as f:
+    linhas = []
+    for raw in f:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        linhas.append("|".join(part.strip() for part in raw.rstrip("\n").split("|")))
+queue = [line for line in linhas if line.partition("|")[0].strip() not in done]
+random.SystemRandom().shuffle(queue)
+for path, values in ((ordem, queue), (pendentes, [x.partition("|")[0].strip() for x in queue])):
+    fd, tmp = tempfile.mkstemp(prefix=".livros-", dir=os.path.dirname(path), text=True)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        for value in values: f.write(value + "\n")
+    os.replace(tmp, path)
+print(len(queue))
+PYQUEUE
+)" || return 1
+  if [ "$restantes" -eq 0 ]; then echo "Todos os titulos ja estao no checkpoint de enviados."; return 0; fi
+  echo "Titulos ainda nao enviados: $restantes (de $total)."
+  echo "A ordem dos titulos pendentes sera sorteada nesta execucao."
+  confirmar_acao "Processar a lista inteira?" || return 0
+  ano_atual="$(python -c 'from datetime import datetime; print(datetime.now().year)')"
+
+  exec 3< "$ordem"
+  while IFS='|' read -r titulo mes ano paginas nota <&3 || [ -n "${titulo:-}" ]; do
+    case "${titulo:-}" in ''|\#*) continue ;; esac
+    if grep -Fqx -- "$titulo" "$enviados"; then
+      continue
+    fi
+    sorteados="$(python -c 'import secrets; r=secrets.SystemRandom(); print(r.randint(1, 12), r.randint(1, 3000), r.randint(0, 10))')"
+    read -r mes_sorteado paginas_sorteadas nota_sorteada <<< "$sorteados"
+    if [ -z "${mes:-}" ]; then mes="$mes_sorteado"; fi
+    ano="$ano_atual"
+    if [ -z "${paginas:-}" ]; then paginas="$paginas_sorteadas"; fi
+    if [ -z "${nota:-}" ]; then nota="$nota_sorteada"; fi
+    if ! [[ "$mes" =~ ^([1-9]|1[0-2])$ && "$ano" =~ ^[0-9]{4}$ && "$paginas" =~ ^[1-9][0-9]*$ && "$nota" =~ ^(10|[0-9])$ ]]; then
+      registrar_log "livro=pendente titulo=$titulo motivo=metadados-invalidos"
+      echo "Metadados invalidos; deixei $titulo pendente."
+      continue
+    fi
+    if post_api livro "$titulo" "$mes" "$ano" "$paginas" "$nota"; then
+      echo "$titulo" >> "$enviados"
+      remover_livro_pendente "$titulo"
+      registrar_log "livro=enviado titulo=$titulo mes=$mes ano=$ano paginas=$paginas nota=$nota"
+      sleep "$INTERVALO"
+    else
+      registrar_log "livro=erro titulo=$titulo; restante permanece em livros-pendentes.txt"
+      echo "Erro no envio; interrompi a sequencia. Confira os logs e retome depois."
+      exec 3<&-
+      return 1
+    fi
+    unset mes ano paginas nota
+  done
+  exec 3<&-
+  rm -f "$ordem"
+  echo "Lista processada. Enviados: $enviados | Pendentes: $pendentes"
+}
+
+garantir_dependencias() {
+  local essenciais=""
+  command -v curl >/dev/null 2>&1 || essenciais="$essenciais curl"
+  command -v python >/dev/null 2>&1 || essenciais="$essenciais python"
+  if [ -n "$essenciais" ]; then
+    if command -v pkg >/dev/null 2>&1; then
+      echo "Instalando dependencias:$essenciais"
+      pkg install -y $essenciais || return 1
+    else
+      echo "ERRO: faltam dependencias:$essenciais (instale-as e tente novamente)."
+      return 1
+    fi
+  fi
+  if ! command -v figlet >/dev/null 2>&1 && command -v pkg >/dev/null 2>&1; then
+    echo "Instalando figlet para o titulo do menu..."
+    pkg install -y figlet >/dev/null 2>&1 || true
+  fi
+}
+
+pedir_token() {
+  if [ -z "$TOKEN" ]; then
+    printf "Token do diario: "
+    IFS= read -r -s TOKEN || return 1
+    printf "\n"
+  fi
+  [ -n "$TOKEN" ] || { echo "ERRO: token vazio."; return 1; }
+}
+
+rodar_verificacao() {
+  pedir_token || return 1
+  atualizar_fetches_site && atualizar_apis_publicas
+}
+
+garantir_dependencias || exit 1
+
+if [ "$#" -eq 0 ]; then
+  if command -v figlet >/dev/null 2>&1; then
+    figlet "DIARIO LEITURA"
+  else
+    printf '\n╔══════════════════════════════════════╗\n║          DIÁRIO DE LEITURA           ║\n╚══════════════════════════════════════╝\n'
+  fi
+  echo
+  echo "A) Verificar os fetches atuais e atualizar o esquema"
+  echo "B) Escolher uma acao da API (vai pedir o token)"
+  echo "C) Relatorio Pitagoras (vai pedir o PIN do site)"
+  echo "D) Outras APIs publicas do site"
+  echo
+  read -r -p "Escolha A, B, C ou D: " escolha
+  case "$escolha" in
+    [aA])
+      rodar_verificacao || exit 1
+      ;;
+    [bB])
+      pedir_token || exit 1
+      atualizar_fetches_site || exit 1
+      menu_acoes_api
+      exit $?
+      ;;
+    [cC])
+      menu_relatorio_parceiros
+      exit $?
+      ;;
+    [dD])
+      menu_apis_publicas
+      exit $?
+      ;;
+    *) echo "Opcao invalida. Escolha A, B, C ou D."; exit 2 ;;
+  esac
+  exit 0
+fi
+
+if [ "${1:-}" = "--verificar-fetches" ]; then
+  rodar_verificacao || exit 1
+  exit 0
+fi
+
+echo "Argumento nao reconhecido. Use sem argumentos para abrir o menu ou --verificar-fetches."
+exit 2

@@ -1,0 +1,14 @@
+Formatos atuais observados em https://www.lugaroriginal.com
+Verificado em: 2026-10-21T21:33:50-03:00
+Fonte: bundles JS da pagina autenticada do diario.
+Campos observados na interface; a validacao interna do servidor pode diferir.
+
+- (sem acao; registro de leitura): data, livro, minutos, modo, pagina, stack, trecho
+- avatar: acao, token
+- desejo: autor, titulo, token
+- editar-livro: id, nota, paginas, token
+- livro: ano, mes, nota, paginas, titulo, token
+- pergunta: acao, token
+- remover-desejo: id, token
+- remover-livro: id, token
+- remover-registro: data, token

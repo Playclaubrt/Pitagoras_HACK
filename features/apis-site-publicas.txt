@@ -1,0 +1,39 @@
+Inventario publico de lugaroriginal.com
+Paginas HTML visitadas: 10
+Bundles JS publicos analisados: 27
+Rotas /api/ disallowed pelo robots.txt: /api/
+Escopo: somente GET de paginas/bundles; formularios nao foram enviados.
+
+Paginas do sitemap e entradas inspecionadas:
+- /
+- /caminho
+- /clube-do-livro
+- /epifania
+- /fresta
+- /manifesto
+- /mentoria
+- /leitura
+- /parceiros/pitagoras
+
+Links internos para outras paginas HTML:
+- /
+- /caminho
+- /clube-do-livro
+- /clube-do-livro/gravacoes
+- /fresta
+- /manifesto
+- /mentoria
+
+Comportamentos de rota observados no codigo publico:
+- GET /leitura le a chave localStorage `leitura:token` e redireciona para /leitura/{token}; nenhum valor de token e coletado.
+
+Rotas /api/ citadas literalmente em bundles:
+- POST /api/subscribe | campos observados: email, website
+
+Formularios publicos encontrados (destinos; nenhum foi enviado):
+- pagina /: JS/default GET / | campos: website
+- pagina /clube-do-livro/gravacoes: POST /clube-do-livro/gravacoes/entrar | campos: senha
+- pagina /fresta: JS/default GET /fresta | campos: website
+- pagina /parceiros/pitagoras: POST /parceiros/pitagoras/auth | campos: pin
+
+Este inventario nao identifica rotas administrativas sem link publico, nem chamadas que exijam autenticacao.

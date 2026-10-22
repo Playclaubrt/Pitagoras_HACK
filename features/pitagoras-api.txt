@@ -1,0 +1,23 @@
+Levantamento ampliado do Lugar Original e do portal Pitagoras
+Verificado em: 2026-10-21
+
+Escopo consultado somente por GET e pelo POST de autenticacao do formulario. Nenhum cadastro, token ou outro dado foi criado.
+
+Portal parceiros/Pitagoras
+- GET /parceiros/pitagoras apresenta um formulario HTML sem JavaScript, com POST para /parceiros/pitagoras/auth e campo `pin`.
+- O POST autenticado responde com redirecionamento HTTP 303 e cookie de sessao; o GET seguinte a /parceiros/pitagoras retorna o relatorio HTML (HTTP 200).
+- Na resposta autenticada nao encontrei scripts, formularios, fetch, XMLHttpRequest, rotas /api/ ou referencias a tokens. Os links encontrados sao somente ancoras para secoes (`#turmas`, anos e series), sem rotas adicionais.
+- Trace de um dado nao pessoal: os titulos das secoes e os identificadores de turma (`6ano` a `9ano`, `1serie` a `3serie`) ja estao no HTML do GET autenticado que segue o redirecionamento. O HTML nao dispara fetch/XHR. Assim, o navegador recebe o relatorio renderizado pelo servidor; nao ha uma API de leitura separada visivel nessa tela. Nenhum valor de aluno foi copiado para este arquivo.
+- Trace solicitado de registro: na secao `#7ano`, um texto com formato de nome e mencoes numericas de livros aparecem como texto HTML no mesmo GET autenticado. Nao foi necessario um endpoint posterior. Os valores foram analisados apenas em memoria e nao foram copiados para arquivos ou saidas.
+- A resposta HTTP nao revela se o servidor montou o relatorio a partir de banco de dados ou arquivo local. Nao encontrei o codigo-fonte do backend nas pastas locais pesquisadas.
+- As opcoes do script local leem secoes desse HTML.
+
+Site publico
+- robots.txt lista o sitemap e declara /api/ como disallowed para crawlers. Por isso, o levantamento foi feito pelas referencias em paginas e bundles publicos; nao usei wordlist nem tentei endpoints escondidos.
+- O sitemap tem sete paginas publicas. Incluindo /leitura e /parceiros/pitagoras, foram inspecionadas nove paginas e 17 bundles JS.
+- A unica rota /api/ literal encontrada nos bundles publicos foi POST /api/subscribe, com os campos `email` e `website`.
+- O inventario local ja conhece POST /api/leitura e os payloads/action vistos na interface do diario; veja `fetches-api-atual.txt`. Os scripts antigos encontrados em `~/downloads` tambem usam somente essa rota.
+
+Conclusao e limite
+- Nao foi encontrada uma tela ou rota de consultar/criar tokens no portal Pitagoras nem nas paginas publicas examinadas.
+- Isso nao prova que inexista uma area administrativa fora do sitemap ou servida por outra URL. Rotas sem referencia publica nao podem ser identificadas com confianca sem o URL/arquivo da interface correspondente.
