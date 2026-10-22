@@ -4,16 +4,21 @@ Script interativo para consultar os formatos usados pelo site e executar ações
 
 ## Requisitos e compatibilidade
 
-- Bash 3.2 ou mais recente
-- `curl`
-- Python 3
+Use Bash 3.2+, `curl`, Git, Python 3 e PostgreSQL client (`psql`). O instalador detecta Termux, Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE, macOS com Homebrew e Windows com Git Bash/MSYS/Cygwin. WSL usa o gerenciador Linux da distribuição. Sistemas sem um desses gerenciadores precisam instalar os mesmos requisitos manualmente.
 
-O script usa Bash e caminhos portáveis. Ele funciona em Linux, macOS, Termux/Android e ambientes Bash no Windows, como Git Bash ou WSL. No iPhone/iPad, é necessário um app de terminal que ofereça Bash, Python 3 e `curl`; o terminal padrão do iOS não executa scripts Bash.
+Antes da primeira execução, rode:
 
-No Termux, dependências ausentes podem ser instaladas com `pkg`. Em outros sistemas, instale Bash, `curl`, Python 3 e Git pelo gerenciador do sistema.
+```sh
+./install-pitagocript.sh
+```
 
-A cada execução, o launcher consulta `origin` e aplica um avanço rápido quando a atualização não sobrescreve mudanças locais. Se houver alterações locais conflitantes, mantém os arquivos e informa que não atualizou. Em seguida, pede o token opcionalmente para buscar os fetches autenticados atuais e regenerar `features/fetches-api-atual.txt` e `features/api_leitura_schema.py`; pressione Enter para pular. O token fica somente na memória. Se o site mudar campos obrigatórios de um payload, o esquema novo fica registrado para análise; a lógica de envio não é reescrita automaticamente porque os nomes dos campos, por si só, não revelam como traduzir os valores.
-Antes disso, cada execução consulta o IP público no serviço `ipwho.is` e verifica se as coordenadas de latitude/longitude ficam dentro de um contorno aproximado do Brasil. Coordenadas fora dessa área são bloqueadas; se a consulta falhar ou não retornar coordenadas válidas, o script fecha sem continuar. Isso restringe este cliente local; para bloquear também outros clientes, a regra precisa ser aplicada no servidor do site. O serviço recebe o IP público para estimar a localização.
+O instalador instala os pacotes disponíveis para o sistema, cria um link `pitagocript` no PATH quando possível e cria `.env` a partir de `.env.example` sem substituir um `.env` existente. Edite `.env` e defina `NEON_DATABASE_URL` com a URI do Neon. Esse é o único dado de configuração externo obrigatório. O arquivo `.env` fica privado e ignorado pelo Git. Instalar dependências pode exigir senha de administrador no Linux/macOS; no Termux usa `pkg` sem sudo.
+
+O launcher verifica as dependências e a URI antes de prosseguir; ele não instala pacotes durante a inicialização. A primeira execução pede o nome e salva em `.person-name`, ignorado pelo Git. Execuções posteriores mostram `Hi, {NAME}`. Após clonar o projeto em outra máquina, instale os pacotes, configure novamente o `.env` e informe o nome uma vez naquele clone.
+
+O sistema consulta o IP público em `ipwho.is` para estimar latitude/longitude e permite continuar apenas dentro de uma área aproximada do Brasil. Se aprovado, salva nome, coordenadas e horário no Neon. O IP não é gravado na tabela. Isso restringe este cliente local; para aplicar a regra a outros clientes, ela precisa existir no servidor.
+
+O script pode consultar `origin` ao iniciar e aplicar atualizações fast-forward sem sobrescrever edições locais. A verificação opcional dos fetches usa token do diário somente em memória; pressione Enter para pular.
 
 ## Uso
 
@@ -23,14 +28,14 @@ Abra o menu interativo com:
 ./pitagocript
 ```
 
-Para instalar o comando no PATH do usuário em Linux, macOS ou Termux:
+Depois de concluir a configuração, abra o sistema com:
 
 ```sh
-./install-pitagocript.sh
 pitagocript --help
+pitagocript
 ```
 
-No Windows, use `pitagocript.cmd` em um terminal onde `bash` esteja no PATH, ou execute `./pitagocript` pelo Git Bash/WSL.
+No Windows, rode o instalador pelo Git Bash e use `pitagocript.cmd` em um terminal onde `bash` esteja no PATH, ou execute `./pitagocript` pelo Git Bash/WSL.
 
 Opções diretas (também podem ser combinadas, por exemplo `pitagocript -a -b`):
 

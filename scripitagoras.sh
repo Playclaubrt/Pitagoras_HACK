@@ -8,6 +8,13 @@ FETCHES_VERIFICADOS=0
 API_MINUTOS=""
 INTERVALO=1
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+# Load private local settings without showing their contents in the terminal.
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  set -a
+  . "$SCRIPT_DIR/.env"
+  set +a
+fi
+PERSON_FILE="$SCRIPT_DIR/.person-name"
 FEATURES_DIR="$SCRIPT_DIR/features"
 LOG_DIR="$SCRIPT_DIR/logs"
 FETCHES_ATUAL="$FEATURES_DIR/fetches-api-atual.txt"
@@ -557,25 +564,19 @@ PYQUEUE
 }
 
 garantir_dependencias() {
-  local essenciais=""
-  command -v curl >/dev/null 2>&1 || essenciais="$essenciais curl"
-  command -v git >/dev/null 2>&1 || essenciais="$essenciais git"
-  if [ -z "$PYTHON_BIN" ]; then
-    if command -v pkg >/dev/null 2>&1; then
-      echo "Instalando Python no Termux..."
-      pkg install -y python || return 1
-      PYTHON_BIN="$(command -v python3 || command -v python || true)"
-    fi
-    [ -n "$PYTHON_BIN" ] || essenciais="$essenciais Python 3"
+  local faltando=""
+  command -v curl >/dev/null 2>&1 || faltando="$faltando curl"
+  command -v git >/dev/null 2>&1 || faltando="$faltando git"
+  command -v psql >/dev/null 2>&1 || faltando="$faltando postgresql-client"
+  [ -n "$PYTHON_BIN" ] || faltando="$faltando python3"
+  if [ -n "$faltando" ]; then
+    echo "ERRO: faltam dependencias:$faltando"
+    echo "Execute ./install-pitagocript.sh para instalar as dependencias antes de iniciar."
+    return 1
   fi
-  if [ -n "$essenciais" ]; then
-    if command -v pkg >/dev/null 2>&1; then
-      echo "Instalando dependencias:$essenciais"
-      pkg install -y $essenciais || return 1
-    else
-      echo "ERRO: faltam dependencias:$essenciais (instale-as e tente novamente)."
-      return 1
-    fi
+  if [ -z "${NEON_DATABASE_URL:-}" ]; then
+    echo "ERRO: configure NEON_DATABASE_URL no arquivo .env (veja .env.example)."
+    return 1
   fi
 }
 
@@ -661,6 +662,61 @@ verificar_classapp() {
   return "$status"
 }
 
+registrar_localizacao_neon() {
+  local latitude="$1" longitude="$2" nome url
+  url="${NEON_DATABASE_URL:-}"
+  if [ -z "$url" ]; then
+    echo "NEON_DATABASE_URL nao esta configurada; nao posso salvar os dados no Neon."
+    return 1
+  fi
+  if ! command -v psql >/dev/null 2>&1; then
+    echo "O cliente psql e necessario para gravar no Neon. Instale PostgreSQL client e tente novamente."
+    return 1
+  fi
+  if [ -n "${CLASSAPP_PERSON_NAME:-}" ]; then
+    nome="$CLASSAPP_PERSON_NAME"
+  elif [ -f "$PERSON_FILE" ]; then
+    IFS= read -r nome < "$PERSON_FILE" || nome=""
+  else
+    printf "What's your name?: "
+    IFS= read -r nome || return 1
+    if ! printf '%s' "$nome" | python -c 'import sys; s=sys.stdin.read(); raise SystemExit(0 if s.strip() and len(s) <= 150 else 1)'; then
+      echo "Informe um nome de 1 a 150 caracteres."
+      return 1
+    fi
+    (umask 077; printf '%s\n' "$nome" > "$PERSON_FILE") || {
+      echo "Nao consegui salvar seu nome localmente."
+      return 1
+    }
+  fi
+  if ! printf '%s' "$nome" | python -c 'import sys; s=sys.stdin.read(); raise SystemExit(0 if s.strip() and len(s) <= 150 else 1)'; then
+    echo "Nome salvo invalido; remova $PERSON_FILE e tente novamente."
+    return 1
+  fi
+  printf 'Hi, %s!\n' "$nome"
+  if ! CLASSAPP_PERSON_NAME="$nome" \
+      CLASSAPP_LATITUDE="$latitude" CLASSAPP_LONGITUDE="$longitude" \
+      psql "$url" -X -q -v ON_ERROR_STOP=1 <<'SQLNEON'
+\getenv person_name CLASSAPP_PERSON_NAME
+\getenv latitude CLASSAPP_LATITUDE
+\getenv longitude CLASSAPP_LONGITUDE
+CREATE TABLE IF NOT EXISTS classapp_access_locations (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  person_name TEXT NOT NULL CHECK (length(person_name) <= 150),
+  latitude DOUBLE PRECISION NOT NULL,
+  longitude DOUBLE PRECISION NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO classapp_access_locations (person_name, latitude, longitude)
+VALUES (:'person_name', :'latitude'::double precision, :'longitude'::double precision);
+SQLNEON
+  then
+    echo "Falha ao salvar a localizacao no Neon."
+    return 1
+  fi
+  echo "Nome e coordenadas salvos no Neon."
+}
+
 # Allow only coordinates inside an approximate outline of Brazil. Location is
 # based on the public IP's latitude/longitude, not country or continent labels.
 verificar_geolocalizacao() {
@@ -711,6 +767,7 @@ print(("BR" if inside else "OUT") + "\t" + str(lat) + "\t" + str(lon))
     echo "Acesso bloqueado: coordenadas fora da area permitida do Brasil ($latitude, $longitude)."
     return 1
   fi
+  registrar_localizacao_neon "$latitude" "$longitude" || return 1
   echo "Localizacao permitida no Brasil ($latitude, $longitude)."
 }
 
