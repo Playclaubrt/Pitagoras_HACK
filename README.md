@@ -10,7 +10,9 @@ Script interativo para consultar os formatos usados pelo site e executar ações
 
 O script usa Bash e caminhos portáveis. Ele funciona em Linux, macOS, Termux/Android e ambientes Bash no Windows, como Git Bash ou WSL. No iPhone/iPad, é necessário um app de terminal que ofereça Bash, Python 3 e `curl`; o terminal padrão do iOS não executa scripts Bash.
 
-No Termux, dependências ausentes podem ser instaladas com `pkg`. Em outros sistemas, instale Bash, `curl` e Python 3 pelo gerenciador do sistema.
+No Termux, dependências ausentes podem ser instaladas com `pkg`. Em outros sistemas, instale Bash, `curl`, Python 3 e Git pelo gerenciador do sistema.
+
+A cada execução, o launcher consulta `origin` e aplica um avanço rápido quando a atualização não sobrescreve mudanças locais. Se houver alterações locais conflitantes, mantém os arquivos e informa que não atualizou. Em seguida, pede o token opcionalmente para buscar os fetches autenticados atuais e regenerar `features/fetches-api-atual.txt` e `features/api_leitura_schema.py`; pressione Enter para pular. O token fica somente na memória. Se o site mudar campos obrigatórios de um payload, o esquema novo fica registrado para análise; a lógica de envio não é reescrita automaticamente porque os nomes dos campos, por si só, não revelam como traduzir os valores.
 
 ## Uso
 

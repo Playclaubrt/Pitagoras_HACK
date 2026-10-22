@@ -4,6 +4,7 @@ set -u
 # Menu interativo para consultar e usar a API do Diario de Leitura.
 API="https://www.lugaroriginal.com/api/leitura"
 TOKEN="${DIARIO_TOKEN:-}"
+FETCHES_VERIFICADOS=0
 API_MINUTOS=""
 INTERVALO=1
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
@@ -24,6 +25,19 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
 else
   C_RESET=""; C_BOLD=""; C_CYAN=""; C_BLUE=""; C_GREEN=""; C_DIM=""
 fi
+
+menu_cabecalho() {
+  printf "\n%s╭────────────────────────────────────────────╮%s\n" "$C_CYAN" "$C_RESET"
+  printf "%s│  %s%s\n" "$C_BOLD$C_CYAN" "$1" "$C_RESET"
+  [ -z "${2:-}" ] || printf "%s│  %s%s\n" "$C_DIM$C_CYAN" "$2" "$C_RESET"
+  printf "%s╰────────────────────────────────────────────╯%s\n\n" "$C_CYAN" "$C_RESET"
+}
+
+menu_opcao() {
+  local cor="$C_GREEN"
+  [ "$1" = "0" ] && cor="$C_DIM"
+  printf "  %s%-3s%s %s\n" "$cor" "$1" "$C_RESET" "$2"
+}
 
 # Consulta a interface atual e atualiza a lista dos payloads vistos nos bundles.
 # Esta verificacao usa GET e nao altera registros do diario.
@@ -103,7 +117,10 @@ print("Relatorio atualizado: " + saida)
 print("Esquema de codigo atualizado: " + os.path.join(os.path.dirname(saida), "api_leitura_schema.py"))
 PYFETCH
   local status=$?
-  if [ "$status" -eq 0 ]; then registrar_log "fetches=atualizados"; fi
+  if [ "$status" -eq 0 ]; then
+    FETCHES_VERIFICADOS=1
+    registrar_log "fetches=atualizados"
+  fi
   return "$status"
 }
 
@@ -137,12 +154,11 @@ post_subscribe() {
 menu_apis_publicas() {
   local escolha
   while :; do
-    echo
-    echo "===== APIS PUBLICAS DO SITE ====="
-    echo "1) Atualizar/ver inventario de APIs"
-    echo "2) Assinar a newsletter"
-    echo "0) Voltar"
-    read -r -p "Escolha uma opcao: " escolha
+    menu_cabecalho "APIS PUBLICAS" "Consultas e newsletter"
+    menu_opcao 1 "Atualizar inventario de APIs"
+    menu_opcao 2 "Assinar a newsletter"
+    menu_opcao 0 "Voltar"
+    read -r -p "› " escolha
     case "$escolha" in
       1)
         atualizar_apis_publicas || continue
@@ -183,24 +199,31 @@ menu_relatorio_parceiros() {
   registrar_log "parceiros=relatorio-acessado"
 
   while :; do
-    echo
-    echo "===== RELATORIO PITAGORAS ====="
-    echo "1) Resumo geral da escola"
-    echo "2) Nota da semana por turma"
-    echo "3) Adesao por turma"
-    echo "4) Detalhes de uma serie (inclui alunos)"
-    echo "5) Relatorio completo (inclui alunos)"
-    echo "0) Voltar"
-    read -r -p "Escolha uma opcao: " opcao
+    menu_cabecalho "RELATORIO PITAGORAS" "Resumo e dados por turma"
+    menu_opcao 1 "Resumo geral da escola"
+    menu_opcao 2 "Nota da semana por turma"
+    menu_opcao 3 "Adesao por turma"
+    menu_opcao 4 "Detalhes de uma serie (inclui alunos)"
+    menu_opcao 5 "Relatorio completo (inclui alunos)"
+    menu_opcao 0 "Voltar"
+    read -r -p "› " opcao
     case "$opcao" in
       1|2|3|5)
         printf '%s' "$RELATORIO_PARCEIROS" | python "$FEATURES_DIR/parceiros_relatorio.py" "$opcao"
         ;;
       4)
-        echo "1) 6º Ano   2) 7º Ano   3) 8º Ano   4) 9º Ano"
-        echo "5) 1ª Série  6) 2ª Série  7) 3ª Série"
-        read -r -p "Escolha a serie: " serie
+        menu_cabecalho "ESCOLHA A SERIE" "Ensino fundamental e medio"
+        menu_opcao 1 "6º Ano"
+        menu_opcao 2 "7º Ano"
+        menu_opcao 3 "8º Ano"
+        menu_opcao 4 "9º Ano"
+        menu_opcao 5 "1ª Serie"
+        menu_opcao 6 "2ª Serie"
+        menu_opcao 7 "3ª Serie"
+        menu_opcao 0 "Voltar ao relatorio"
+        read -r -p "› " serie
         case "$serie" in
+          0) continue ;;
           1) id=6ano ;; 2) id=7ano ;; 3) id=8ano ;; 4) id=9ano ;;
           5) id=1serie ;; 6) id=2serie ;; 7) id=3serie ;;
           *) echo "Serie invalida."; continue ;;
@@ -273,18 +296,17 @@ confirmar_acao() {
 menu_acoes_api() {
   local escolha data livro pagina minutos trecho modo titulo mes ano paginas nota autor ident
   while :; do
-    echo
-    echo "===== ACOES DO DIARIO ====="
-    echo "1) Registrar leitura do dia"
-    echo "2) Cadastrar livro terminado"
-    echo "3) Adicionar livro desejado"
-    echo "4) Editar paginas e nota de um livro"
-    echo "5) Remover livro terminado"
-    echo "6) Remover registro de leitura por data"
-    echo "7) Remover livro desejado"
-    echo "8) Acumular (submenu)"
-    echo "0) Voltar / sair"
-    read -r -p "Escolha uma acao: " escolha
+    menu_cabecalho "ACOES DO DIARIO" "Registros e livros"
+    menu_opcao 1 "Registrar leitura do dia"
+    menu_opcao 2 "Cadastrar livro terminado"
+    menu_opcao 3 "Adicionar livro desejado"
+    menu_opcao 4 "Editar paginas e nota de um livro"
+    menu_opcao 5 "Remover livro terminado"
+    menu_opcao 6 "Remover registro por data"
+    menu_opcao 7 "Remover livro desejado"
+    menu_opcao 8 "Acumular leituras e livros"
+    menu_opcao 0 "Voltar ao menu principal"
+    read -r -p "› " escolha
     case "$escolha" in
       1)
         read -r -p "Data (AAAA-MM-DD): " data
@@ -352,12 +374,10 @@ PYPENDING
 
 menu_acumular() {
   local escolha data livro pagina i atual
-  echo
-  printf "\n%s╭────────────── ACUMULAR ──────────────╮%s\n" "$C_CYAN" "$C_RESET"
-  printf "  %s1%s  Somar leituras ate 600 minutos\n" "$C_GREEN" "$C_RESET"
-  printf "  %s2%s  Buscar 750 titulos no Project Gutenberg\n" "$C_GREEN" "$C_RESET"
-  printf "  %s0%s  Voltar\n" "$C_DIM" "$C_RESET"
-  printf "%s╰─────────────────────────────────────╯%s\n" "$C_CYAN" "$C_RESET"
+  menu_cabecalho "ACUMULAR" "Leituras e livros"
+  menu_opcao 1 "Somar leituras ate 600 minutos"
+  menu_opcao 2 "Buscar 750 titulos no Project Gutenberg"
+  menu_opcao 0 "Voltar as acoes do diario"
   read -r -p "› " escolha
   case "$escolha" in
     1)
@@ -539,6 +559,7 @@ PYQUEUE
 garantir_dependencias() {
   local essenciais=""
   command -v curl >/dev/null 2>&1 || essenciais="$essenciais curl"
+  command -v git >/dev/null 2>&1 || essenciais="$essenciais git"
   if [ -z "$PYTHON_BIN" ]; then
     if command -v pkg >/dev/null 2>&1; then
       echo "Instalando Python no Termux..."
@@ -569,7 +590,55 @@ pedir_token() {
 
 rodar_verificacao() {
   pedir_token || return 1
-  atualizar_fetches_site && atualizar_apis_publicas
+  if [ "$FETCHES_VERIFICADOS" -ne 1 ]; then atualizar_fetches_site || return 1; fi
+  atualizar_apis_publicas
+}
+
+# Check origin on every launch. Fast-forward only; Git refuses if local edits
+# would be overwritten, so a user's work is kept intact.
+atualizar_codigo_remoto() {
+  local branch remoto contagens frente atras
+  command -v git >/dev/null 2>&1 || { echo "Git indisponivel; pulei a verificacao do origin."; return 0; }
+  git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  branch="$(git -C "$SCRIPT_DIR" branch --show-current 2>/dev/null)"
+  [ -n "$branch" ] || { echo "Branch local nao identificada; pulei a atualizacao."; return 0; }
+  remoto="origin/$branch"
+  if ! git -C "$SCRIPT_DIR" fetch --quiet --no-tags origin "$branch"; then
+    echo "Nao consegui consultar origin; vou continuar com o codigo local."
+    return 0
+  fi
+  git -C "$SCRIPT_DIR" show-ref --verify --quiet "refs/remotes/$remoto" || {
+    echo "origin/$branch nao encontrado; vou continuar com o codigo local."
+    return 0
+  }
+  contagens="$(git -C "$SCRIPT_DIR" rev-list --left-right --count "HEAD...$remoto" 2>/dev/null)" || return 0
+  read -r frente atras <<< "$contagens"
+  if [ "${atras:-0}" -gt 0 ]; then
+    if git -C "$SCRIPT_DIR" merge --ff-only --quiet "$remoto"; then
+      echo "Codigo atualizado de origin/$branch. A nova versao sera usada na proxima execucao."
+    else
+      echo "origin/$branch tem atualizacoes, mas ha edicoes locais que impedem o avanco seguro. Mantive seus arquivos locais."
+    fi
+  elif [ "${frente:-0}" -gt 0 ]; then
+    echo "Codigo local tem commits que ainda nao estao em origin/$branch."
+  fi
+}
+
+atualizar_esquema_no_inicio() {
+  if [ -z "$TOKEN" ]; then
+    printf "Token do diario para verificar os fetches do site (Enter para pular): "
+    IFS= read -r -s TOKEN || TOKEN=""
+    printf "\n"
+  fi
+  if [ -z "$TOKEN" ]; then
+    echo "Verificacao dos fetches do site pulada; nenhum token foi informado."
+    return 0
+  fi
+  if atualizar_fetches_site; then
+    echo "Esquema local atualizado com os fetches atuais do site."
+  else
+    echo "Nao consegui ler os fetches do site; mantive o ultimo esquema salvo."
+  fi
 }
 
 mostrar_ajuda() {
@@ -614,26 +683,29 @@ while [ "$#" -gt 0 ]; do
 done
 
 garantir_dependencias || exit 1
+atualizar_codigo_remoto
+atualizar_esquema_no_inicio
 
 if [ "${#ACOES[@]}" -eq 0 ]; then
   while :; do
-    printf "\n%s╭────────────────────────────────────────────╮%s\n" "$C_CYAN" "$C_RESET"
-    printf "%s│  📚  DIÁRIO DE LEITURA                     │%s\n" "$C_BOLD$C_CYAN" "$C_RESET"
-    printf "%s│      Seu painel de leitura                 │%s\n" "$C_DIM$C_CYAN" "$C_RESET"
-    printf "%s╰────────────────────────────────────────────╯%s\n\n" "$C_CYAN" "$C_RESET"
+    menu_cabecalho "DIÁRIO DE LEITURA" "Seu painel de leitura"
     printf "%s  PRINCIPAL%s\n" "$C_BOLD$C_BLUE" "$C_RESET"
-    printf "  %sA%s  Atualizar verificacao e esquema de API\n" "$C_GREEN" "$C_RESET"
-    printf "  %sB%s  Abrir ferramentas do diario\n" "$C_GREEN" "$C_RESET"
+    menu_opcao A "Atualizar verificacao e esquema de API"
+    menu_opcao B "Abrir ferramentas do diario"
     printf "\n%s  CONSULTAS%s\n" "$C_BOLD$C_BLUE" "$C_RESET"
-    printf "  %sC%s  Relatorio Pitagoras\n" "$C_GREEN" "$C_RESET"
-    printf "  %sD%s  APIs publicas e newsletter\n" "$C_GREEN" "$C_RESET"
-    printf "  %s0%s  Fechar\n" "$C_DIM" "$C_RESET"
+    menu_opcao C "Relatorio Pitagoras"
+    menu_opcao D "APIs publicas e newsletter"
+    menu_opcao 0 "Fechar"
     read -r -p "› " escolha || exit 0
     case "$escolha" in
       [aA]) rodar_verificacao || echo "A verificacao falhou." ;;
       [bB])
         if pedir_token; then
-          if atualizar_fetches_site; then menu_acoes_api; else echo "Nao foi possivel atualizar as referencias."; fi
+          if [ "$FETCHES_VERIFICADOS" -eq 1 ] || atualizar_fetches_site; then
+            menu_acoes_api
+          else
+            echo "Nao foi possivel atualizar as referencias."
+          fi
         fi
         ;;
       [cC]) menu_relatorio_parceiros || echo "Nao foi possivel abrir o relatorio." ;;
@@ -647,7 +719,7 @@ fi
 for acao in "${ACOES[@]}"; do
   case "$acao" in
     a) rodar_verificacao || exit $? ;;
-    b) pedir_token || exit 1; atualizar_fetches_site || exit 1; menu_acoes_api || exit $? ;;
+    b) pedir_token || exit 1; if [ "$FETCHES_VERIFICADOS" -ne 1 ]; then atualizar_fetches_site || exit 1; fi; menu_acoes_api || exit $? ;;
     c) menu_relatorio_parceiros || exit $? ;;
     d) menu_apis_publicas || exit $? ;;
   esac
