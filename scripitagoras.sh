@@ -641,6 +641,79 @@ atualizar_esquema_no_inicio() {
   fi
 }
 
+verificar_classapp() {
+  local host="classapp-app.firebaseio.com" status
+  if ! command -v ping >/dev/null 2>&1; then
+    echo "Nao encontrei o comando ping neste sistema."
+    return 1
+  fi
+  echo "Verificando Class APP: $host"
+  case "$(uname -s 2>/dev/null)" in
+    Darwin*) ping -c 1 -W 5000 "$host" >/dev/null 2>&1; status=$? ;;
+    MINGW*|MSYS*|CYGWIN*) ping -n 1 -w 5000 "$host" >/dev/null 2>&1; status=$? ;;
+    *) ping -c 1 -W 5 "$host" >/dev/null 2>&1; status=$? ;;
+  esac
+  if [ "$status" -eq 0 ]; then
+    echo "Class APP esta acessivel pela rede (ping respondeu)."
+  else
+    echo "Class APP nao respondeu ao ping. Verifique DNS, conexao ou disponibilidade do host."
+  fi
+  return "$status"
+}
+
+# Allow only coordinates inside an approximate outline of Brazil. Location is
+# based on the public IP's latitude/longitude, not country or continent labels.
+verificar_geolocalizacao() {
+  local resposta localizacao estado latitude longitude
+  if ! resposta="$(curl --http1.1 -fsSL --max-time 10 https://ipwho.is/)"; then
+    echo "Nao consegui verificar as coordenadas. Por seguranca, o script nao vai continuar."
+    return 1
+  fi
+  localizacao="$(printf '%s' "$resposta" | python -c '
+import json, math, sys
+try:
+    d = json.load(sys.stdin)
+    if d.get("success") is not True:
+        raise ValueError("lookup failed")
+    lat, lon = float(d["latitude"]), float(d["longitude"])
+    if not math.isfinite(lat) or not math.isfinite(lon):
+        raise ValueError("invalid coordinates")
+except Exception:
+    raise SystemExit(1)
+
+# Approximate Brazil border, as (latitude, longitude) pairs.
+polygon = [
+    (1.0,-69.5), (4.0,-64.0), (5.3,-60.2), (4.0,-58.0),
+    (2.0,-52.0), (0.0,-50.0), (-1.0,-46.0), (-3.0,-44.0),
+    (-2.0,-42.0), (-4.0,-40.0), (-6.0,-36.0), (-7.2,-34.7),
+    (-10.0,-35.0), (-13.0,-38.0), (-16.0,-39.5), (-19.0,-40.5),
+    (-22.0,-41.5), (-24.0,-46.0), (-26.0,-48.5), (-29.0,-49.5),
+    (-32.0,-52.0), (-33.8,-53.5), (-32.0,-55.5), (-29.0,-57.5),
+    (-25.0,-58.0), (-22.0,-57.0), (-19.0,-54.0), (-16.0,-58.0),
+    (-13.0,-60.5), (-10.0,-65.0), (-8.0,-70.0), (-7.5,-74.0),
+    (-4.0,-74.0), (-1.0,-72.0), (1.0,-69.5),
+]
+inside = False
+j = len(polygon) - 1
+for i, (yi, xi) in enumerate(polygon):
+    yj, xj = polygon[j]
+    crosses = ((yi > lat) != (yj > lat)) and (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi)
+    if crosses:
+        inside = not inside
+    j = i
+print(("BR" if inside else "OUT") + "\t" + str(lat) + "\t" + str(lon))
+' 2>/dev/null)" || {
+    echo "Resposta de coordenadas invalida. Por seguranca, o script nao vai continuar."
+    return 1
+  }
+  IFS=$'\t' read -r estado latitude longitude <<< "$localizacao"
+  if [ "$estado" != "BR" ]; then
+    echo "Acesso bloqueado: coordenadas fora da area permitida do Brasil ($latitude, $longitude)."
+    return 1
+  fi
+  echo "Localizacao permitida no Brasil ($latitude, $longitude)."
+}
+
 mostrar_ajuda() {
   cat <<'HELP'
 Uso: pitagocript [opcoes]
@@ -683,6 +756,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 garantir_dependencias || exit 1
+verificar_geolocalizacao || exit 1
 atualizar_codigo_remoto
 atualizar_esquema_no_inicio
 
@@ -695,11 +769,18 @@ if [ "${#ACOES[@]}" -eq 0 ]; then
     printf "\n%s  CONSULTAS%s\n" "$C_BOLD$C_BLUE" "$C_RESET"
     menu_opcao C "Relatorio Pitagoras"
     menu_opcao D "APIs publicas e newsletter"
+
+    menu_cabecalho "Class APP" "Verificacao do sistema"
+    menu_opcao A "Verificar Sistema"
+
+    menu_cabecalho "Education 1" "Em breve"
+    printf "  %sNovas opcoes estarao disponiveis em breve.%s\n\n" "$C_DIM" "$C_RESET"
+    printf "Use D-A, D-B, D-C ou D-D para o Diario; C-A para Class APP; 0 para fechar.\n"
     menu_opcao 0 "Fechar"
     read -r -p "› " escolha || exit 0
     case "$escolha" in
-      [aA]) rodar_verificacao || echo "A verificacao falhou." ;;
-      [bB])
+      D-A|d-a|D:A|d:a|DIARIO:A|diario:a) rodar_verificacao || echo "A verificacao falhou." ;;
+      D-B|d-b|D:B|d:b|DIARIO:B|diario:b)
         if pedir_token; then
           if [ "$FETCHES_VERIFICADOS" -eq 1 ] || atualizar_fetches_site; then
             menu_acoes_api
@@ -708,10 +789,11 @@ if [ "${#ACOES[@]}" -eq 0 ]; then
           fi
         fi
         ;;
-      [cC]) menu_relatorio_parceiros || echo "Nao foi possivel abrir o relatorio." ;;
-      [dD]) menu_apis_publicas || echo "Nao foi possivel abrir as APIs publicas." ;;
+      D-C|d-c|D:C|d:c|DIARIO:C|diario:c) menu_relatorio_parceiros || echo "Nao foi possivel abrir o relatorio." ;;
+      D-D|d-d|D:D|d:d|DIARIO:D|diario:d) menu_apis_publicas || echo "Nao foi possivel abrir as APIs publicas." ;;
+      C-A|c-a|C:A|c:a|CLASS:A|class:a) verificar_classapp || true ;;
       0) exit 0 ;;
-      *) echo "Opcao invalida. Escolha A, B, C, D ou 0." ;;
+      *) echo "Opcao invalida. Use D-A, D-B, D-C, D-D, C-A ou 0." ;;
     esac
   done
 fi
