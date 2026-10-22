@@ -16,8 +16,6 @@ O instalador instala os pacotes disponíveis para o sistema, cria um link `pitag
 
 O launcher verifica as dependências e a URI antes de prosseguir; ele não instala pacotes durante a inicialização. A primeira execução pede o nome e salva em `.person-name`, ignorado pelo Git. Execuções posteriores mostram `Hi, {NAME}`. Após clonar o projeto em outra máquina, instale os pacotes, configure novamente o `.env` e informe o nome uma vez naquele clone.
 
-O sistema consulta o IP público em `ipwho.is` para estimar latitude/longitude e permite continuar apenas dentro de uma área aproximada do Brasil. Se aprovado, salva nome, coordenadas e horário no Neon. O IP não é gravado na tabela. Isso restringe este cliente local; para aplicar a regra a outros clientes, ela precisa existir no servidor.
-
 O script pode consultar `origin` ao iniciar e aplicar atualizações fast-forward sem sobrescrever edições locais. A verificação opcional dos fetches usa token do diário somente em memória; pressione Enter para pular.
 
 ## Uso
