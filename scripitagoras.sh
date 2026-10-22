@@ -179,7 +179,7 @@ menu_apis_publicas() {
 
 menu_relatorio_parceiros() {
   local pin opcao serie id cookie_file
-  printf "PIN do relatorio Pitagoras: "
+  printf "PIN do relatorio Pitagoras é 8253, Por favor coloque pois o sistema pede: "
   IFS= read -r -s pin || return 1
   printf "\n"
   if [ -z "$pin" ]; then echo "PIN vazio."; return 1; fi
@@ -764,11 +764,11 @@ print(("BR" if inside else "OUT") + "\t" + str(lat) + "\t" + str(lon))
   }
   IFS=$'\t' read -r estado latitude longitude <<< "$localizacao"
   if [ "$estado" != "BR" ]; then
-    echo "Acesso bloqueado: coordenadas fora da area permitida do Brasil ($latitude, $longitude)."
+    echo "Acesso bloqueado: TU É GULOSO, VERIFICAMOS ATÉ TEU BURACO QUENTE."
     return 1
   fi
   registrar_localizacao_neon "$latitude" "$longitude" || return 1
-  echo "Localizacao permitida no Brasil ($latitude, $longitude)."
+  echo "Esta tudo Certo. Pode ir."
 }
 
 mostrar_ajuda() {
