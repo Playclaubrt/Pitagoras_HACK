@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 set -u
 
 # Menu interativo para consultar e usar a API do Diario de Leitura.
@@ -13,6 +13,17 @@ FETCHES_ATUAL="$FEATURES_DIR/fetches-api-atual.txt"
 FETCHES_CODIGO="$FEATURES_DIR/api_leitura_schema.py"
 APIS_PUBLICAS="$FEATURES_DIR/apis-site-publicas.txt"
 LOG_FILE="$LOG_DIR/diario-leitura.log"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python || true)}"
+
+python() { "$PYTHON_BIN" "$@"; }
+
+# Cores opcionais para deixar o menu mais legivel no terminal.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_CYAN=$'\033[36m'
+  C_BLUE=$'\033[34m'; C_GREEN=$'\033[32m'; C_DIM=$'\033[2m'
+else
+  C_RESET=""; C_BOLD=""; C_CYAN=""; C_BLUE=""; C_GREEN=""; C_DIM=""
+fi
 
 # Consulta a interface atual e atualiza a lista dos payloads vistos nos bundles.
 # Esta verificacao usa GET e nao altera registros do diario.
@@ -342,11 +353,12 @@ PYPENDING
 menu_acumular() {
   local escolha data livro pagina i atual
   echo
-  echo "===== ACUMULAR ====="
-  echo "1) Somar leituras de 60 min ate chegar a 600 min"
-  echo "2) Sortear mes/paginas/nota e processar todos os livros (ate 750)"
-  echo "0) Voltar"
-  read -r -p "Escolha uma opcao: " escolha
+  printf "\n%s╭────────────── ACUMULAR ──────────────╮%s\n" "$C_CYAN" "$C_RESET"
+  printf "  %s1%s  Somar leituras ate 600 minutos\n" "$C_GREEN" "$C_RESET"
+  printf "  %s2%s  Buscar 750 titulos no Project Gutenberg\n" "$C_GREEN" "$C_RESET"
+  printf "  %s0%s  Voltar\n" "$C_DIM" "$C_RESET"
+  printf "%s╰─────────────────────────────────────╯%s\n" "$C_CYAN" "$C_RESET"
+  read -r -p "› " escolha
   case "$escolha" in
     1)
       read -r -p "Data (AAAA-MM-DD): " data
@@ -377,15 +389,65 @@ menu_acumular() {
       done
       echo "Foram feitas 10 tentativas. Total informado pela API: ${API_MINUTOS:-desconhecido}."
       ;;
-    2) processar_livros_em_sequencia ;;
+    2)
+      local lista_gutenberg="$SCRIPT_DIR/books/livros-gutenberg-750.txt"
+      gerar_lista_gutenberg_750 "$lista_gutenberg" || return 1
+      processar_livros_em_sequencia "$lista_gutenberg"
+      ;;
     0) return 0 ;;
     *) echo "Opcao invalida."; return 2 ;;
   esac
 }
 
+gerar_lista_gutenberg_750() {
+  local destino="$1"
+  python - "$destino" <<'PYGUTENBERG'
+import csv, gzip, io, re, sys, tempfile, urllib.request, os
+
+destino = sys.argv[1]
+url = "https://www.gutenberg.org/cache/epub/feeds/pg_catalog.csv.gz"
+print("Buscando catalogo do Project Gutenberg...")
+try:
+    with urllib.request.urlopen(url, timeout=45) as response:
+        dados = gzip.decompress(response.read()).decode("utf-8", "replace")
+except Exception as exc:
+    raise SystemExit(f"ERRO ao baixar o catalogo: {exc}")
+
+titulos, vistos = [], set()
+for row in csv.DictReader(io.StringIO(dados)):
+    if row.get("Type", "").strip().lower() != "text":
+        continue
+    if not {x.strip().lower() for x in row.get("Language", "").split(";")} & {"en", "pt"}:
+        continue
+    titulo = re.sub(r"\s+", " ", row.get("Title", "")).strip()
+    chave = titulo.casefold()
+    if not titulo or len(titulo) > 160 or chave in vistos:
+        continue
+    vistos.add(chave)
+    titulos.append(titulo.replace("|", " "))
+    if len(titulos) == 750:
+        break
+
+if len(titulos) < 750:
+    raise SystemExit(f"ERRO: catalogo retornou apenas {len(titulos)} titulos validos.")
+os.makedirs(os.path.dirname(destino), exist_ok=True)
+fd, temporario = tempfile.mkstemp(prefix=".livros-gutenberg-", dir=os.path.dirname(destino), text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as arquivo:
+        arquivo.write("# 750 titulos do catalogo do Project Gutenberg; um por linha.\n")
+        arquivo.writelines(titulo + "\n" for titulo in titulos)
+    os.replace(temporario, destino)
+except Exception:
+    try: os.unlink(temporario)
+    except OSError: pass
+    raise
+print(f"TXT criado com 750 titulos: {destino}")
+PYGUTENBERG
+}
+
 processar_livros_em_sequencia() {
   local arquivo enviados pendentes ordem total titulo mes ano paginas nota data_atual ano_atual sorteados mes_sorteado paginas_sorteadas nota_sorteada
-  arquivo="$SCRIPT_DIR/books/livros.txt"
+  arquivo="${1:-$SCRIPT_DIR/books/livros.txt}"
   enviados="$LOG_DIR/livros-enviados.txt"
   pendentes="$LOG_DIR/livros-pendentes.txt"
   mkdir -p "$SCRIPT_DIR/books" "$LOG_DIR"
@@ -477,7 +539,14 @@ PYQUEUE
 garantir_dependencias() {
   local essenciais=""
   command -v curl >/dev/null 2>&1 || essenciais="$essenciais curl"
-  command -v python >/dev/null 2>&1 || essenciais="$essenciais python"
+  if [ -z "$PYTHON_BIN" ]; then
+    if command -v pkg >/dev/null 2>&1; then
+      echo "Instalando Python no Termux..."
+      pkg install -y python || return 1
+      PYTHON_BIN="$(command -v python3 || command -v python || true)"
+    fi
+    [ -n "$PYTHON_BIN" ] || essenciais="$essenciais Python 3"
+  fi
   if [ -n "$essenciais" ]; then
     if command -v pkg >/dev/null 2>&1; then
       echo "Instalando dependencias:$essenciais"
@@ -486,10 +555,6 @@ garantir_dependencias() {
       echo "ERRO: faltam dependencias:$essenciais (instale-as e tente novamente)."
       return 1
     fi
-  fi
-  if ! command -v figlet >/dev/null 2>&1 && command -v pkg >/dev/null 2>&1; then
-    echo "Instalando figlet para o titulo do menu..."
-    pkg install -y figlet >/dev/null 2>&1 || true
   fi
 }
 
@@ -507,48 +572,83 @@ rodar_verificacao() {
   atualizar_fetches_site && atualizar_apis_publicas
 }
 
+mostrar_ajuda() {
+  cat <<'HELP'
+Uso: pitagocript [opcoes]
+
+Sem opcoes, abre o menu interativo. Opcoes podem ser combinadas e executam
+na ordem informada:
+  -a, --atualizar, --verificar-fetches  Atualiza referencias das APIs
+  -b, --diario                          Abre as acoes do diario
+  -c, --pitagoras                       Abre o relatorio Pitagoras
+  -d, --apis                            Abre APIs publicas e newsletter
+  -h, --help                            Mostra esta ajuda
+
+Exemplos:
+  pitagocript
+  pitagocript -a
+  pitagocript -a -b
+  pitagocript -cd
+HELP
+}
+
+declare -a ACOES=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help) mostrar_ajuda; exit 0 ;;
+    -a|--atualizar|--verificar-fetches) ACOES+=(a) ;;
+    -b|--diario) ACOES+=(b) ;;
+    -c|--pitagoras) ACOES+=(c) ;;
+    -d|--apis) ACOES+=(d) ;;
+    -[abcd][abcd]*)
+      flags="${1#-}"
+      while [ -n "$flags" ]; do
+        flag="${flags:0:1}"
+        case "$flag" in a|b|c|d) ACOES+=("$flag") ;; *) echo "Opcao invalida: -$flag" >&2; exit 2 ;; esac
+        flags="${flags:1}"
+      done
+      ;;
+    *) echo "Opcao nao reconhecida: $1" >&2; echo "Use pitagocript --help." >&2; exit 2 ;;
+  esac
+  shift
+done
+
 garantir_dependencias || exit 1
 
-if [ "$#" -eq 0 ]; then
-  if command -v figlet >/dev/null 2>&1; then
-    figlet "DIARIO LEITURA"
-  else
-    printf '\n╔══════════════════════════════════════╗\n║          DIÁRIO DE LEITURA           ║\n╚══════════════════════════════════════╝\n'
-  fi
-  echo
-  echo "A) Verificar os fetches atuais e atualizar o esquema"
-  echo "B) Escolher uma acao da API (vai pedir o token)"
-  echo "C) Relatorio Pitagoras (vai pedir o PIN do site)"
-  echo "D) Outras APIs publicas do site"
-  echo
-  read -r -p "Escolha A, B, C ou D: " escolha
-  case "$escolha" in
-    [aA])
-      rodar_verificacao || exit 1
-      ;;
-    [bB])
-      pedir_token || exit 1
-      atualizar_fetches_site || exit 1
-      menu_acoes_api
-      exit $?
-      ;;
-    [cC])
-      menu_relatorio_parceiros
-      exit $?
-      ;;
-    [dD])
-      menu_apis_publicas
-      exit $?
-      ;;
-    *) echo "Opcao invalida. Escolha A, B, C ou D."; exit 2 ;;
+if [ "${#ACOES[@]}" -eq 0 ]; then
+  while :; do
+    printf "\n%s╭────────────────────────────────────────────╮%s\n" "$C_CYAN" "$C_RESET"
+    printf "%s│  📚  DIÁRIO DE LEITURA                     │%s\n" "$C_BOLD$C_CYAN" "$C_RESET"
+    printf "%s│      Seu painel de leitura                 │%s\n" "$C_DIM$C_CYAN" "$C_RESET"
+    printf "%s╰────────────────────────────────────────────╯%s\n\n" "$C_CYAN" "$C_RESET"
+    printf "%s  PRINCIPAL%s\n" "$C_BOLD$C_BLUE" "$C_RESET"
+    printf "  %sA%s  Atualizar verificacao e esquema de API\n" "$C_GREEN" "$C_RESET"
+    printf "  %sB%s  Abrir ferramentas do diario\n" "$C_GREEN" "$C_RESET"
+    printf "\n%s  CONSULTAS%s\n" "$C_BOLD$C_BLUE" "$C_RESET"
+    printf "  %sC%s  Relatorio Pitagoras\n" "$C_GREEN" "$C_RESET"
+    printf "  %sD%s  APIs publicas e newsletter\n" "$C_GREEN" "$C_RESET"
+    printf "  %s0%s  Fechar\n" "$C_DIM" "$C_RESET"
+    read -r -p "› " escolha || exit 0
+    case "$escolha" in
+      [aA]) rodar_verificacao || echo "A verificacao falhou." ;;
+      [bB])
+        if pedir_token; then
+          if atualizar_fetches_site; then menu_acoes_api; else echo "Nao foi possivel atualizar as referencias."; fi
+        fi
+        ;;
+      [cC]) menu_relatorio_parceiros || echo "Nao foi possivel abrir o relatorio." ;;
+      [dD]) menu_apis_publicas || echo "Nao foi possivel abrir as APIs publicas." ;;
+      0) exit 0 ;;
+      *) echo "Opcao invalida. Escolha A, B, C, D ou 0." ;;
+    esac
+  done
+fi
+
+for acao in "${ACOES[@]}"; do
+  case "$acao" in
+    a) rodar_verificacao || exit $? ;;
+    b) pedir_token || exit 1; atualizar_fetches_site || exit 1; menu_acoes_api || exit $? ;;
+    c) menu_relatorio_parceiros || exit $? ;;
+    d) menu_apis_publicas || exit $? ;;
   esac
-  exit 0
-fi
-
-if [ "${1:-}" = "--verificar-fetches" ]; then
-  rodar_verificacao || exit 1
-  exit 0
-fi
-
-echo "Argumento nao reconhecido. Use sem argumentos para abrir o menu ou --verificar-fetches."
-exit 2
+done

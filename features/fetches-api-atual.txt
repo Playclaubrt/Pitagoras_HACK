@@ -1,5 +1,5 @@
 Formatos atuais observados em https://www.lugaroriginal.com
-Verificado em: 2026-10-21T21:33:50-03:00
+Verificado em: 2026-10-22T07:11:17-03:00
 Fonte: bundles JS da pagina autenticada do diario.
 Campos observados na interface; a validacao interna do servidor pode diferir.
 
