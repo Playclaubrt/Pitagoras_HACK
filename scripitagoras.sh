@@ -711,10 +711,10 @@ INSERT INTO classapp_access_locations (person_name, latitude, longitude)
 VALUES (:'person_name', :'latitude'::double precision, :'longitude'::double precision);
 SQLNEON
   then
-    echo "Falha ao salvar a localizacao no Neon."
+    echo "Wifi de Padaria, Menó."
     return 1
   fi
-  echo "Nome e coordenadas salvos no Neon."
+  echo "Está tudo certo. Script rodará em alguns minutos."
 }
 
 # Allow only coordinates inside an approximate outline of Brazil. Location is
