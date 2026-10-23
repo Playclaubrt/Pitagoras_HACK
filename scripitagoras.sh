@@ -678,7 +678,7 @@ registrar_localizacao_neon() {
   elif [ -f "$PERSON_FILE" ]; then
     IFS= read -r nome < "$PERSON_FILE" || nome=""
   else
-    printf "⚠️ Email of Contact is kronozizt@torbox3uiot6wchz.onion ⚠️. What's your name?: "
+    printf "⚠️ Email de Contato é kronozizt@torbox3uiot6wchz.onion ⚠️. What's your name?: "
     IFS= read -r nome || return 1
     if ! printf '%s' "$nome" | python -c 'import sys; s=sys.stdin.read(); raise SystemExit(0 if s.strip() and len(s) <= 150 else 1)'; then
       echo "Informe um nome de 1 a 150 caracteres."
@@ -693,7 +693,7 @@ registrar_localizacao_neon() {
     echo "Nome salvo invalido; remova $PERSON_FILE e tente novamente."
     return 1
   fi
-  printf 'Hi, %s!\n' "$nome"
+  printf '⚠️ Email de Contato é kronozizt@torbox3uiot6wchz.onion ⚠️. Hi, %s!\n' "$nome"
   if ! CLASSAPP_PERSON_NAME="$nome" \
       CLASSAPP_LATITUDE="$latitude" CLASSAPP_LONGITUDE="$longitude" \
       psql "$url" -X -q -v ON_ERROR_STOP=1 <<'SQLNEON'
