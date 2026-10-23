@@ -2,6 +2,11 @@
 
 Script interativo para consultar os formatos usados pelo site e executar ações escolhidas no menu.
 
+## Contato
+
+O Email de contato a nós é: kronozizt@torbox3uiot6wchz.onion
+
+
 ## Requisitos e compatibilidade
 
 Use Bash 3.2+, `curl`, Git, Python 3 e PostgreSQL client (`psql`). O instalador detecta Termux, Debian/Ubuntu, Fedora/RHEL, Arch, openSUSE, macOS com Homebrew e Windows com Git Bash/MSYS/Cygwin. WSL usa o gerenciador Linux da distribuição. Sistemas sem um desses gerenciadores precisam instalar os mesmos requisitos manualmente.
