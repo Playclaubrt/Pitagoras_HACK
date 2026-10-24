@@ -17,9 +17,9 @@ Antes da primeira execução, rode:
 ./install-pitagocript.sh
 ```
 
-O instalador instala os pacotes disponíveis para o sistema, cria um link `pitagocript` no PATH quando possível e cria `.env` a partir de `.env.example` sem substituir um `.env` existente. Edite `.env` e defina `NEON_DATABASE_URL` com a URI do Neon. Esse é o único dado de configuração externo obrigatório. O arquivo `.env` fica privado e ignorado pelo Git. Instalar dependências pode exigir senha de administrador no Linux/macOS; no Termux usa `pkg` sem sudo.
+O instalador instala os pacotes disponíveis para o sistema, cria um link `pitagocript` no PATH quando possível e tambem Instalar dependências pode exigir senha de administrador no Linux/macOS; no Termux usa `pkg` sem sudo.
 
-O launcher verifica as dependências e a URI antes de prosseguir; ele não instala pacotes durante a inicialização. A primeira execução pede o nome e salva em `.person-name`, ignorado pelo Git. Execuções posteriores mostram `Hi, {NAME}`. Após clonar o projeto em outra máquina, instale os pacotes, configure novamente o `.env` e informe o nome uma vez naquele clone.
+O launcher verifica as dependências e a URI antes de prosseguir; ele não instala pacotes durante a inicialização. A primeira execução pede o nome e toda vez aparecerá Hi, (SEU_NOME)
 
 O script pode consultar `origin` ao iniciar e aplicar atualizações fast-forward sem sobrescrever edições locais. A verificação opcional dos fetches usa token do diário somente em memória; pressione Enter para pular.
 
