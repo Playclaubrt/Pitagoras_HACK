@@ -740,7 +740,7 @@ verificar_host_ping() {
 menu_verificar_sistemas() {
   local escolha falhas
   while :; do
-    menu_cabecalho "VERIFICAR SISTEMAS" "Ping testa conectividade com os hosts"
+    menu_cabecalho "VERIFICAR SISTEMAS" "Ping individual ou requisicoes HTTPS continuas"
     menu_opcao 1 "education1app.firebaseio.com"
     menu_opcao 2 "education1app.appspot.com"
     menu_opcao 3 "firebaseinstallations.googleapis.com"
@@ -788,6 +788,110 @@ verificar_classapp() {
   else
     echo "Class APP nao respondeu ao ping. Verifique DNS, conexao ou disponibilidade do host."
   fi
+  return "$status"
+}
+
+monitorar_hosts_ping() {
+  local rotulo="$1" quantidade indice pasta interrompido=0 segundos=0 status linhas_atuais linha_ping
+  shift
+  local -a nomes=() hosts=() arquivos=() pids=() saidas=() linhas_lidas=()
+  while [ "$#" -ge 2 ]; do
+    nomes+=("$1")
+    hosts+=("$2")
+    shift 2
+  done
+  quantidade="${#hosts[@]}"
+  if [ "$quantidade" -eq 0 ]; then
+    echo "Nenhum host foi configurado para o monitoramento."
+    return 1
+  fi
+  if ! command -v ping >/dev/null 2>&1; then
+    echo "Nao encontrei o comando ping neste sistema."
+    return 1
+  fi
+  pasta="$(mktemp -d "${TMPDIR:-/tmp}/scripitagoras-ping.XXXXXX")" || return 1
+  echo "Enviando ping ICMP com payload de 8 bits (1 byte), um por segundo para cada host."
+  echo "Pressione Ctrl+C para parar e gerar o Relatorio."
+
+  for ((indice=0; indice<quantidade; indice++)); do
+    arquivos+=("$pasta/$indice.log")
+    linhas_lidas+=(0)
+    case "$(uname -s 2>/dev/null)" in
+      MINGW*|MSYS*|CYGWIN*) ping -t -l 1 "${hosts[$indice]}" >"${arquivos[$indice]}" 2>&1 & ;;
+      *) ping -n -s 1 -i 1 "${hosts[$indice]}" >"${arquivos[$indice]}" 2>&1 & ;;
+    esac
+    pids+=("$!")
+  done
+
+  trap 'interrompido=1' INT TERM
+  while [ "$interrompido" -eq 0 ]; do
+    sleep 1 || true
+    for ((indice=0; indice<quantidade; indice++)); do
+      linhas_atuais="$(wc -l < "${arquivos[$indice]}" 2>/dev/null || echo 0)"
+      linhas_atuais="${linhas_atuais//[[:space:]]/}"
+      if [ "${linhas_atuais:-0}" -gt "${linhas_lidas[$indice]}" ]; then
+        while IFS= read -r linha_ping; do
+          case "$linha_ping" in
+            *"bytes from"*|*"timeout"*|*"unreachable"*|*"No route"*|*"unknown host"*)
+              printf '\n[%s] %s\n' "${nomes[$indice]}" "$linha_ping" ;;
+          esac
+        done < <(sed -n "$((linhas_lidas[$indice] + 1)),${linhas_atuais}p" "${arquivos[$indice]}")
+        linhas_lidas[$indice]="$linhas_atuais"
+      fi
+    done
+    segundos=$((segundos + 1))
+    printf '\rMonitorando ha %ss. Ctrl+C encerra e mostra o Relatorio. ' "$segundos"
+  done
+  trap - INT TERM
+  printf '\nParando os pings e preparando o Relatorio...\n'
+  for ((indice=0; indice<quantidade; indice++)); do
+    kill -INT "${pids[$indice]}" 2>/dev/null || true
+  done
+  for ((indice=0; indice<quantidade; indice++)); do
+    wait "${pids[$indice]}" 2>/dev/null
+    saidas+=("$?")
+  done
+
+  python - "$rotulo" "$quantidade" "${nomes[@]}" "${hosts[@]}" "${arquivos[@]}" "${saidas[@]}" <<'PINGSUMMARY'
+import re, sys
+rotulo, count = sys.argv[1], int(sys.argv[2])
+args = sys.argv[3:]
+names = args[:count]
+hosts = args[count:2*count]
+files = args[2*count:3*count]
+statuses = args[3*count:4*count]
+total_ok = total_err = hosts_ok = 0
+print(f"\nRelatorio — {rotulo}")
+for name, host, path, status in zip(names, hosts, files, statuses):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            output = f.read()
+    except OSError:
+        output = ""
+    matches = re.findall(r"(\d+)\s+packets transmitted,\s*(\d+)\s+(?:packets\s+)?received", output, re.I)
+    if matches:
+        sent, received = map(int, matches[-1])
+        errors = max(0, sent - received)
+    else:
+        received = len(re.findall(r"\bbytes from\b", output, re.I))
+        errors = 1 if status != "0" and received == 0 else 0
+    total_ok += received
+    total_err += errors
+    working = received > 0
+    hosts_ok += int(working)
+    result = "RESPONDENDO" if working else "SEM RESPOSTA"
+    print(f"- {name} ({host}): funcionou={received}, erro/perda={errors}; {result}")
+print(f"Pacotes que funcionaram: {total_ok}")
+print(f"Pacotes com erro/perda: {total_err}")
+print(f"Hosts respondendo ao ping: {hosts_ok}/{count}")
+if hosts_ok:
+    print(f"Resume: {hosts_ok} de {count} host(s) responderam ao ping.")
+else:
+    print("Resume: nenhum host respondeu ao ping.")
+print("Ping ICMP confirma resposta de rede, nao o funcionamento da API ou do servico HTTPS.")
+PINGSUMMARY
+  status=$?
+  rm -rf "$pasta"
   return "$status"
 }
 
@@ -958,11 +1062,13 @@ if [ "${#ACOES[@]}" -eq 0 ]; then
 
     menu_cabecalho "Class APP" "Verificacao do sistema"
     menu_opcao A "Verificar Sistema"
+    menu_opcao B "Ping de 8 bits continuo ate Ctrl+C"
 
     menu_cabecalho "Education 1" "Portal educacional"
     menu_opcao A "Verificar Sistemas (submenu)"
+    menu_opcao B "Enviar pings de 8 bits a todos os hosts"
 
-    printf "Use D-A ate D-D para o Diario; C-A para Class APP; E-A para Verificar Sistemas (submenu); 0 para fechar.\n"
+    printf "Use D-A ate D-D para o Diario; C-A/C-B para Class APP; E-A para testes Education; E-B para ping continuo; 0 para fechar.\n"
     menu_opcao 0 "Fechar"
     read -r -p "› " escolha || exit 0
     case "$escolha" in
@@ -979,9 +1085,15 @@ if [ "${#ACOES[@]}" -eq 0 ]; then
       D-C|d-c|D:C|d:c|DIARIO:C|diario:c) menu_relatorio_parceiros || echo "Nao foi possivel abrir o relatorio." ;;
       D-D|d-d|D:D|d:d|DIARIO:D|diario:d) menu_apis_publicas || echo "Nao foi possivel abrir as APIs publicas." ;;
       C-A|c-a|C:A|c:a|CLASS:A|class:a) verificar_classapp || true ;;
+      C-B|c-b|C:B|c:b|CLASS:B|class:b) monitorar_hosts_ping "Class APP" "Class APP" "classapp-app.firebaseio.com" ;;
       A|a|E-A|e-a|E:A|e:a|EDUCATION:A|education:a) menu_verificar_sistemas ;;
+      E-B|e-b|E:B|e:b|EDUCATION:B|education:b) monitorar_hosts_ping "Education 1" \
+        "Firebase Realtime Database" "education1app.firebaseio.com" \
+        "Google App Engine" "education1app.appspot.com" \
+        "Firebase Installations" "firebaseinstallations.googleapis.com" \
+        "Education 1" "e1.education1.com.br" ;;
       0) exit 0 ;;
-      *) echo "Opcao invalida. Use D-A, D-B, D-C, D-D, C-A, E-A ou 0." ;;
+      *) echo "Opcao invalida. Use D-A a D-D, C-A, C-B, E-A, E-B ou 0." ;;
     esac
   done
 fi
