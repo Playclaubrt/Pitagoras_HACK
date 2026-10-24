@@ -48,7 +48,7 @@ Opções diretas (também podem ser combinadas, por exemplo `pitagocript -a -b`)
 - `-d`: abrir APIs públicas e newsletter.
 - `-h`: mostrar ajuda.
 
-Ao iniciar sem opções, o terminal mostra três painéis nesta ordem: **Diário de Leitura**, **Class APP** e **Education 1**. O Diário mantém as opções A–D; no prompt compartilhado, use `D-A` até `D-D` para escolhê-las. Class APP tem apenas `A — Verificar Sistema`, selecionada com `C-A`. Education 1 aparece abaixo com “Em breve” e ainda não tem opções selecionáveis. `0` fecha o script.
+Ao iniciar sem opções, o terminal mostra três painéis nesta ordem: **Diário de Leitura**, **Class APP** e **Education 1**. O Diário mantém as opções A–D; no prompt compartilhado, use `D-A` até `D-D` para escolhê-las. Class APP tem apenas `A — Verificar Sistema`, selecionada com `C-A`. Education 1 oferece `E-A`, que abre um submenu: `A — Verificar Sistema` consulta `https://e1.education1.com.br/app_free.php` com HTTP GET e informa o status HTTP; `E — Abrir Education 1` abre esse endereço no navegador padrão. A URL está embutida no APK do Education 1. O status HTTP mede o acesso ao portal, não a saúde interna do Firebase. `0` fecha o script.
 
 A verificação do Class APP envia ping para `classapp-app.firebaseio.com` e informa se o host respondeu. Ping confirma conectividade de rede, não o estado interno do aplicativo.
 

@@ -2,6 +2,7 @@
 set -u
 
 # Menu interativo para consultar e usar a API do Diario de Leitura.
+ORIGINAL_ARGS=("$@")
 API="https://www.lugaroriginal.com/api/leitura"
 TOKEN="${DIARIO_TOKEN:-}"
 FETCHES_VERIFICADOS=0
@@ -595,10 +596,9 @@ rodar_verificacao() {
   atualizar_apis_publicas
 }
 
-# Check origin on every launch. Fast-forward only; Git refuses if local edits
-# would be overwritten, so a user's work is kept intact.
+# Check origin on every launch, preserve local edits, and restart on new code.
 atualizar_codigo_remoto() {
-  local branch remoto contagens frente atras
+  local branch remoto contagens frente atras dirty=0 stash_antes stash_depois
   command -v git >/dev/null 2>&1 || { echo "Git indisponivel; pulei a verificacao do origin."; return 0; }
   git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
   branch="$(git -C "$SCRIPT_DIR" branch --show-current 2>/dev/null)"
@@ -615,11 +615,35 @@ atualizar_codigo_remoto() {
   contagens="$(git -C "$SCRIPT_DIR" rev-list --left-right --count "HEAD...$remoto" 2>/dev/null)" || return 0
   read -r frente atras <<< "$contagens"
   if [ "${atras:-0}" -gt 0 ]; then
-    if git -C "$SCRIPT_DIR" merge --ff-only --quiet "$remoto"; then
-      echo "Codigo atualizado de origin/$branch. A nova versao sera usada na proxima execucao."
-    else
-      echo "origin/$branch tem atualizacoes, mas ha edicoes locais que impedem o avanco seguro. Mantive seus arquivos locais."
+    if [ -n "$(git -C "$SCRIPT_DIR" status --porcelain 2>/dev/null)" ]; then
+      dirty=1
+      stash_antes="$(git -C "$SCRIPT_DIR" rev-parse -q --verify refs/stash 2>/dev/null || true)"
+      if ! git -C "$SCRIPT_DIR" stash push --include-untracked --quiet -m "scripitagoras auto-update $(date '+%Y%m%d%H%M%S')"; then
+        echo "Nao consegui guardar as edicoes locais; mantive o codigo atual."
+        return 0
+      fi
+      stash_depois="$(git -C "$SCRIPT_DIR" rev-parse -q --verify refs/stash 2>/dev/null || true)"
+      if [ "$stash_antes" = "$stash_depois" ]; then
+        echo "Nao consegui guardar as edicoes locais; mantive o codigo atual."
+        return 0
+      fi
     fi
+
+    if ! git -C "$SCRIPT_DIR" merge --ff-only --quiet "$remoto"; then
+      echo "Nao foi possivel aplicar origin/$branch; vou restaurar suas edicoes locais."
+      if [ "$dirty" -eq 1 ]; then
+        git -C "$SCRIPT_DIR" stash pop --index >/dev/null 2>&1 || echo "Edicoes preservadas no stash do Git; restaure-as manualmente."
+      fi
+      return 0
+    fi
+
+    if [ "$dirty" -eq 1 ] && ! git -C "$SCRIPT_DIR" stash pop --index; then
+      echo "O codigo foi atualizado, mas algumas edicoes locais conflitam. Elas continuam guardadas no stash; resolva os conflitos antes de reiniciar."
+      return 0
+    fi
+
+    echo "Codigo atualizado de origin/$branch. Reiniciando com a nova versao..."
+    exec bash "$SCRIPT_DIR/scripitagoras.sh" "${ORIGINAL_ARGS[@]}"
   elif [ "${frente:-0}" -gt 0 ]; then
     echo "Codigo local tem commits que ainda nao estao em origin/$branch."
   fi
@@ -640,6 +664,111 @@ atualizar_esquema_no_inicio() {
   else
     echo "Nao consegui ler os fetches do site; mantive o ultimo esquema salvo."
   fi
+}
+
+abrir_education1() {
+  local url="https://e1.education1.com.br/app_free.php"
+  echo "Education 1: $url"
+  if command -v termux-open-url >/dev/null 2>&1; then
+    termux-open-url "$url"
+  elif command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$url" >/dev/null 2>&1 &
+  elif command -v open >/dev/null 2>&1; then
+    open "$url"
+  else
+    echo "Nenhum abridor de URL foi encontrado. Abra o link acima no navegador."
+    return 1
+  fi
+}
+
+verificar_education1() {
+  local url="https://e1.education1.com.br/app_free.php" resultado status curl_status
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "Nao encontrei o comando curl neste sistema."
+    return 1
+  fi
+  echo "Verificando Education 1: $url"
+  resultado="$(curl --http1.1 -sS -L --max-time 20 -o /dev/null -w '%{http_code}' "$url" 2>&1)"
+  curl_status=$?
+  if [ "$curl_status" -ne 0 ]; then
+    echo "Education 1 nao respondeu corretamente (curl=$curl_status): $resultado"
+    return "$curl_status"
+  fi
+  status="$resultado"
+  case "$status" in
+    2??|3??) echo "Education 1 respondeu com HTTP $status; servidor acessivel." ;;
+    *) echo "Education 1 respondeu com HTTP $status; servidor esta acessivel, mas retornou erro."; return 1 ;;
+  esac
+}
+
+menu_education1() {
+  while :; do
+    menu_cabecalho "Education 1" "Verificacao e portal"
+    menu_opcao A "Verificar Sistemas (submenu)"
+    menu_opcao E "Education 1 (verificar/abrir)"
+    menu_opcao 0 "Voltar"
+    read -r -p "› " escolha || return 0
+    case "$escolha" in
+      A|a) menu_verificar_sistemas ;;
+      E|e) abrir_education1 || true ;;
+      0) return 0 ;;
+      *) echo "Opcao invalida. Use A, E ou 0." ;;
+    esac
+  done
+}
+
+verificar_host_ping() {
+  local nome="$1" host="$2" status
+  if ! command -v ping >/dev/null 2>&1; then
+    echo "Nao encontrei o comando ping neste sistema."
+    return 127
+  fi
+  printf 'Verificando %-30s ' "$nome"
+  case "$(uname -s 2>/dev/null)" in
+    Darwin*) ping -c 1 -W 5000 "$host" >/dev/null 2>&1; status=$? ;;
+    MINGW*|MSYS*|CYGWIN*) ping -n 1 -w 5000 "$host" >/dev/null 2>&1; status=$? ;;
+    *) ping -c 1 -W 5 "$host" >/dev/null 2>&1; status=$? ;;
+  esac
+  if [ "$status" -eq 0 ]; then
+    echo "OK (host respondeu)"
+  else
+    echo "FALHOU (sem resposta ao ping)"
+  fi
+  return "$status"
+}
+
+menu_verificar_sistemas() {
+  local escolha falhas
+  while :; do
+    menu_cabecalho "VERIFICAR SISTEMAS" "Ping testa conectividade com os hosts"
+    menu_opcao 1 "education1app.firebaseio.com"
+    menu_opcao 2 "education1app.appspot.com"
+    menu_opcao 3 "firebaseinstallations.googleapis.com"
+    menu_opcao 4 "e1.education1.com.br"
+    menu_opcao T "Testar todos os quatro hosts"
+    menu_opcao 0 "Voltar"
+    read -r -p "› " escolha || return 0
+    case "$escolha" in
+      1) verificar_host_ping "Firebase Realtime Database" "education1app.firebaseio.com" || true ;;
+      2) verificar_host_ping "Google App Engine" "education1app.appspot.com" || true ;;
+      3) verificar_host_ping "Firebase Installations" "firebaseinstallations.googleapis.com" || true ;;
+      4) verificar_host_ping "Education 1" "e1.education1.com.br" || true ;;
+      T|t)
+        falhas=0
+        verificar_host_ping "Firebase Realtime Database" "education1app.firebaseio.com" || falhas=$((falhas + 1))
+        verificar_host_ping "Google App Engine" "education1app.appspot.com" || falhas=$((falhas + 1))
+        verificar_host_ping "Firebase Installations" "firebaseinstallations.googleapis.com" || falhas=$((falhas + 1))
+        verificar_host_ping "Education 1" "e1.education1.com.br" || falhas=$((falhas + 1))
+        if [ "$falhas" -eq 0 ]; then
+          echo "Todos os hosts responderam ao ping."
+        else
+          echo "$falhas host(s) nao responderam ao ping."
+        fi
+        ;;
+      0) return 0 ;;
+      *) echo "Opcao invalida. Use 1, 2, 3, 4, T ou 0." ;;
+    esac
+  done
 }
 
 verificar_classapp() {
@@ -830,9 +959,10 @@ if [ "${#ACOES[@]}" -eq 0 ]; then
     menu_cabecalho "Class APP" "Verificacao do sistema"
     menu_opcao A "Verificar Sistema"
 
-    menu_cabecalho "Education 1" "Em breve"
-    printf "  %sNovas opcoes estarao disponiveis em breve.%s\n\n" "$C_DIM" "$C_RESET"
-    printf "Use D-A, D-B, D-C ou D-D para o Diario; C-A para Class APP; 0 para fechar.\n"
+    menu_cabecalho "Education 1" "Portal educacional"
+    menu_opcao A "Verificar Sistemas (submenu)"
+
+    printf "Use D-A ate D-D para o Diario; C-A para Class APP; E-A para Verificar Sistemas (submenu); 0 para fechar.\n"
     menu_opcao 0 "Fechar"
     read -r -p "› " escolha || exit 0
     case "$escolha" in
@@ -849,8 +979,9 @@ if [ "${#ACOES[@]}" -eq 0 ]; then
       D-C|d-c|D:C|d:c|DIARIO:C|diario:c) menu_relatorio_parceiros || echo "Nao foi possivel abrir o relatorio." ;;
       D-D|d-d|D:D|d:d|DIARIO:D|diario:d) menu_apis_publicas || echo "Nao foi possivel abrir as APIs publicas." ;;
       C-A|c-a|C:A|c:a|CLASS:A|class:a) verificar_classapp || true ;;
+      A|a|E-A|e-a|E:A|e:a|EDUCATION:A|education:a) menu_verificar_sistemas ;;
       0) exit 0 ;;
-      *) echo "Opcao invalida. Use D-A, D-B, D-C, D-D, C-A ou 0." ;;
+      *) echo "Opcao invalida. Use D-A, D-B, D-C, D-D, C-A, E-A ou 0." ;;
     esac
   done
 fi
