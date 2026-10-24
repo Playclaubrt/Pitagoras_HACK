@@ -1,0 +1,83 @@
+name: Sync fetch references from Wacker
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Pitagoras_HACK
+        uses: actions/checkout@v4
+
+      - name: Download Wacker JSON and update fetch references
+        id: update
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pprint
+          from datetime import datetime
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          url = "https://raw.githubusercontent.com/Playclaubrt/Wacker/main/incoming/diario-fetches.json"
+          request = Request(url, headers={"Accept": "application/json", "User-Agent": "Pitagoras-HACK-fetch-sync"})
+          try:
+              with urlopen(request, timeout=20) as response:
+                  incoming = json.load(response)
+          except Exception as exc:
+              raise SystemExit(f"Could not download Wacker fetch JSON: {exc}")
+
+          fetches = incoming.get("fetches") if isinstance(incoming, dict) else None
+          if not isinstance(fetches, dict) or not fetches:
+              raise SystemExit('Expected a non-empty object at "fetches".')
+          normalized = {}
+          for action, fields in fetches.items():
+              if not isinstance(action, str) or not action.strip():
+                  raise SystemExit("Fetch action names must be non-empty strings.")
+              if not isinstance(fields, list) or any(not isinstance(field, str) or not field.strip() for field in fields):
+                  raise SystemExit(f"Fields for {action!r} must be an array of non-empty strings.")
+              normalized[action] = sorted(set(fields))
+          normalized = dict(sorted(normalized.items()))
+
+          features = Path("features")
+          schema_path = features / "api_leitura_schema.py"
+          report_path = features / "fetches-api-atual.txt"
+          newline = chr(10)
+          schema = "# Gerado automaticamente; nao edite. Campos vistos nos fetches do site." + newline + "API_FETCHES = " + pprint.pformat(normalized, sort_dicts=True) + newline
+          now = datetime.now().astimezone().isoformat(timespec="seconds")
+          lines = [
+              "Formatos atuais observados em https://www.lugaroriginal.com",
+              f"Atualizado via JSON recebido do repositorio Wacker em: {now}",
+              "Fonte: analise local enviada em incoming/diario-fetches.json.",
+              "Campos observados na interface; a validacao interna do servidor pode diferir.",
+              "",
+          ]
+          for action, fields in normalized.items():
+              lines.append(f"- {action}: {', '.join(fields) or '(campos nao identificados)'}")
+          report = newline.join(lines) + newline
+
+          changed = False
+          for path, content in ((schema_path, schema), (report_path, report)):
+              if not path.exists() or path.read_text(encoding="utf-8") != content:
+                  path.write_text(content, encoding="utf-8")
+                  changed = True
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("changed=" + str(changed).lower() + newline)
+          print(f"Updated {len(normalized)} fetch actions; changed={changed}")
+          PY
+
+      - name: Commit fetch reference updates
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add features/api_leitura_schema.py features/fetches-api-atual.txt
+          git diff --cached --quiet || git commit -m "Update observed Diario de Leitura fetches"
+          git push
